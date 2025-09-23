@@ -1,8 +1,52 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>📊 MTurk HIT Monitor</title>
+  <meta charset="utf-8" />
+  <title>MTurk Monitor — Firestore</title>
+  <style>
+    body {
+      font-family: Inter, Roboto, Arial, sans-serif;
+      background: #f7f8fa;
+      padding: 20px;
+      color: #111827;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: #fff;
+      border-radius: 6px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+    th, td {
+      border: 1px solid #e6e9ef;
+      padding: 10px;
+      font-size: 14px;
+    }
+    th {
+      background: #f1f3f5;
+      text-align: left;
+      font-weight: 600;
+    }
+    td.reward {
+      text-align: right;
+      font-weight: 600;
+      color: #047857;
+    }
+    tr:hover {
+      background: #f9fcff;
+    }
+  </style>
+</head>
+<body>
+  <h1>MTurk Monitor (Realtime)</h1>
+  <div id="tableContainer">Loading...</div>
+
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -20,120 +64,61 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // 🔊 Notification sound
-    const notifSound = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
-    notifSound.preload = "auto";
-    function unlockAudio() {
-      notifSound.play().then(() => {
-        notifSound.pause();
-        notifSound.currentTime = 0;
-      }).catch(() => {});
-      document.removeEventListener("click", unlockAudio);
-      document.removeEventListener("keydown", unlockAudio);
-    }
-    document.addEventListener("click", unlockAudio);
-    document.addEventListener("keydown", unlockAudio);
+    const hitsRef = collection(db, "hits");
+    const tableContainer = document.getElementById("tableContainer");
 
-    // 📒 WorkerId → Username mapping
-    let workerMap = {};
-    async function loadWorkerMap() {
-      // ⚠️ You must "Publish to web" your Google Sheet as CSV
-      const url = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
-      const res = await fetch(url);
-      const text = await res.text();
-      text.split("\n").slice(1).forEach(row => {
-        const [workerId, username] = row.split(",");
-        if (workerId && username) workerMap[workerId.trim()] = username.trim();
+    function buildTable(hits) {
+      if (!hits.length) {
+        tableContainer.innerHTML = "<p>No HITs in Firestore</p>";
+        return;
+      }
+
+      let html = `
+        <table>
+          <thead>
+            <tr>
+              <th>Worker ID</th>
+              <th>Requester</th>
+              <th>Title</th>
+              <th>Reward</th>
+              <th>Accepted At</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      for (const hit of hits) {
+        const reward = (typeof hit.reward === "number" && !isNaN(hit.reward))
+          ? `$${hit.reward.toFixed(2)}`
+          : (hit.reward || "-");
+
+        html += `
+          <tr>
+            <td>${hit.workerId || "-"}</td>
+            <td>${hit.requester || "-"}</td>
+            <td>${hit.title || "-"}</td>
+            <td class="reward">${reward}</td>
+            <td>${hit.acceptedAt ? new Date(hit.acceptedAt).toLocaleString() : "-"}</td>
+          </tr>
+        `;
+      }
+
+      html += "</tbody></table>";
+      tableContainer.innerHTML = html;
+    }
+
+    // 🔴 Subscribe to Firestore changes
+    onSnapshot(hitsRef, (snapshot) => {
+      console.log("📡 Firestore snapshot size:", snapshot.size);
+      const hits = [];
+      snapshot.forEach(doc => {
+        console.log("🔥 HIT doc:", doc.id, doc.data());
+        hits.push(doc.data());
       });
-    }
-
-    // 🕒 Format timer
-    function fmtTimer(sec) {
-      if (sec == null) return "-";
-      sec = Math.max(0, Math.floor(sec));
-      const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
-      return h>0 ? \`\${h}:\${String(m).padStart(2,"0")}:\${String(s).padStart(2,"0")}\`
-                 : \`\${m}:\${String(s).padStart(2,"0")}\`;
-    }
-
-    // 🖼️ Render table
-    function renderTable(hits) {
-      const tbody = document.querySelector("#hits-body");
-      tbody.innerHTML = "";
-      hits.forEach(h => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = \`
-          <td>\${h.assignmentId}</td>
-          <td>\${workerMap[h.workerId] || h.workerId}</td>
-          <td>\${h.requester}</td>
-          <td>\${h.title}</td>
-          <td>\$ \${h.reward.toFixed(2)}</td>
-          <td class="remain" data-seconds="\${h.remainingSeconds || ""}">\${fmtTimer(h.remainingSeconds)}</td>
-        \`;
-        tbody.appendChild(tr);
-      });
-    }
-
-    // ⏱️ Update countdown every 30s
-    function tickCountdowns() {
-      document.querySelectorAll("td.remain").forEach(td => {
-        const sec = parseInt(td.dataset.seconds);
-        if (isNaN(sec)) return;
-        const newVal = Math.max(0, parseInt(td.dataset.seconds)-30);
-        td.dataset.seconds = newVal;
-        td.textContent = fmtTimer(newVal);
-      });
-    }
-    setInterval(tickCountdowns, 30000);
-
-    // 🔄 Firestore live updates
-    let knownIds = new Set();
-    async function init() {
-      await loadWorkerMap();
-      onSnapshot(collection(db, "hits"), snap => {
-        const hits = [];
-        snap.forEach(doc => hits.push(doc.data()));
-
-        // sort by deadline soonest first
-        hits.sort((a,b) => (a.remainingSeconds||999999) - (b.remainingSeconds||999999));
-
-        // detect new hits from task page only
-        for (const h of hits) {
-          if (!knownIds.has(h.assignmentId) && h.apiKey === "enjoymturk2025" && h.deadline === null) {
-            // deadline=null → came from task page (since queue fills deadlines)
-            try { notifSound.play(); } catch {}
-          }
-        }
-
-        knownIds = new Set(hits.map(h => h.assignmentId));
-        renderTable(hits);
-      });
-    }
-    init();
+      buildTable(hits);
+    }, (error) => {
+      console.error("❌ Firestore onSnapshot error:", error);
+    });
   </script>
-
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
-    th { background: #f5f5f5; }
-    tr:nth-child(even) { background: #fafafa; }
-  </style>
-</head>
-<body>
-  <h2>📊 MTurk HIT Monitor</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Assignment ID</th>
-        <th>Worker</th>
-        <th>Requester</th>
-        <th>Title</th>
-        <th>Reward</th>
-        <th>Time Remaining</th>
-      </tr>
-    </thead>
-    <tbody id="hits-body"></tbody>
-  </table>
 </body>
 </html>
