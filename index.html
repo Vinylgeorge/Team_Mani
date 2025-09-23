@@ -2,242 +2,191 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MTurk Monitor</title>
-
+  <title>MTurk Monitor — Firestore</title>
   <style>
-    :root{
-      --bg:#f7f8fa;
-      --card:#ffffff;
-      --muted:#6b7280;
-      --accent:#0f62fe;
-      --border:#e6e9ef;
-    }
-    body{
+    body {
       font-family: Inter, Roboto, Arial, sans-serif;
-      background: var(--bg);
-      margin: 0;
-      padding: 24px;
+      background: #f7f8fa;
+      padding: 20px;
       color: #111827;
     }
-    .wrap{ max-width: 1200px; margin: 0 auto; }
-    header{ display:flex; gap:16px; align-items:center; margin-bottom:18px; }
-    h1{ margin:0; font-size:20px; }
-    .controls{ margin-left:auto; display:flex; gap:10px; align-items:center; color:var(--muted); }
-    button{
-      background:var(--accent); color:#fff; border:0;
-      padding:8px 10px; border-radius:8px; cursor:pointer; font-weight:600;
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
     }
-    button.secondary{ background:#fff; color:var(--accent); border:1px solid var(--accent); padding:7px 10px; }
-    .card{ background:var(--card); border-radius:10px; padding:12px; box-shadow: 0 1px 0 rgba(15,20,30,0.03); border:1px solid var(--border); }
-    table{ width:100%; border-collapse:collapse; font-size:14px; }
-    thead th{ text-align:left; font-size:13px; color:var(--muted); padding:10px 8px; border-bottom:1px solid var(--border); position:sticky; top:0; background:#fff; }
-    tbody td{ padding:10px 8px; border-bottom:1px solid #f1f3f5; vertical-align:middle; }
-    tbody tr:hover{ background:#fbfdff; }
-    .small{ font-size:13px; color:var(--muted); }
-    .empty{ padding:40px; text-align:center; color:var(--muted); }
-    footer{ margin-top:12px; color:var(--muted); font-size:13px; }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+    }
+    th {
+      background: #f1f3f5;
+      text-align: left;
+    }
+    tr:hover {
+      background: #f9fcff;
+    }
+    a.rdp-link {
+      color: #0f62fe;
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <h1>MTurk Monitor</h1>
-      <div class="controls">
-        <label class="switch">
-          <input id="autoRefresh" type="checkbox" />
-          <span class="small">Auto-refresh (10s)</span>
-        </label>
-        <button id="refreshBtn">Refresh</button>
-        <button id="csvBtn" class="secondary">Download CSV</button>
-      </div>
-    </header>
+  <h1>MTurk Monitor (Realtime)</h1>
+  <div id="tableContainer">Loading...</div>
 
-    <div class="card">
-      <div id="tableContainer">
-        <div class="empty">Loading queue from worker ids..</div>
-      </div>
-    </div>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    <footer>
-      <div><strong>Source:</strong> <span id="binInfo" class="small">jsonbin.io + Google Sheets</span></div>
-    </footer>
-  </div>
+    const firebaseConfig = {
+      apiKey: "AIzaSyAC8nTZp3jHtan1wNOn5AMlBdIjAhUOuao",
+  authDomain: "mturk-monitor-71203.firebaseapp.com",
+  projectId: "mturk-monitor-71203",
+  storageBucket: "mturk-monitor-71203.firebasestorage.app",
+  messagingSenderId: "149805882414",
+  appId: "1:149805882414:web:ad879531a567e0b1b713bf"
+    };
 
-  <script>
-    // ----- CONFIGURE HERE -----
-    const BIN_ID = "68d1b5e8d0ea881f4086e034";
-    const API_KEY = "$2a$10$aAaJAIiEaXJUrgB1GDlAG.o.3O9T67IFA5F99azsM90ZqxH71Di5K";
-    const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv";
-    // --------------------------
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
 
-    const REFRESH_INTERVAL_MS = 10000; // 10s
+    const hitsRef = collection(db, "hits");
     const tableContainer = document.getElementById("tableContainer");
-    const refreshBtn = document.getElementById("refreshBtn");
-    const autoRefreshCheckbox = document.getElementById("autoRefresh");
-    const csvBtn = document.getElementById("csvBtn");
-    const binInfo = document.getElementById("binInfo");
 
-    const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
-    binInfo.textContent = `jsonbin.io — bin: ${BIN_ID}`;
+    const notificationSound = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
+    notificationSound.preload = "auto";
 
-    let latestHits = [];
-    let userMap = {}; // WorkerID → User
-
-    // ---------- UTILITIES ----------
-    function fmtTimeRemaining(sec){
-      if (sec == null || isNaN(sec)) return "-";
-      const m = Math.floor(sec/60);
-      const s = sec % 60;
-      return `${m}m ${s}s`;
+    function unlockAudio() {
+      notificationSound.play().then(() => {
+        notificationSound.pause();
+        notificationSound.currentTime = 0;
+      }).catch(() => {});
+      document.removeEventListener("click", unlockAudio);
+      document.removeEventListener("keydown", unlockAudio);
     }
-    function fmtAcceptedAt(iso){
-      if(!iso) return "-";
-      try { return new Date(iso).toLocaleString(); }
-      catch(e){ return iso; }
-    }
-    function safeText(str){
-      if (str == null) return "";
-      return String(str).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
-    }
+    document.addEventListener("click", unlockAudio);
+    document.addEventListener("keydown", unlockAudio);
 
-    // ---------- GOOGLE SHEET ----------
-    async function fetchUserMap(){
+    let knownIds = new Set();
+
+    // --- Load Google Sheet into lookup map ---
+    const SHEET_CSV_URL =
+      "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
+
+    let workerMap = {}; // { workerId → { user, host, username } }
+
+    async function loadWorkerMap() {
       try {
         const res = await fetch(SHEET_CSV_URL);
         const text = await res.text();
-        const rows = text.split("\n").map(r => r.split(","));
-        const headers = rows[0];
-        const workerIdx = headers.findIndex(h => h.toLowerCase().includes("worker"));
-        const userIdx = headers.findIndex(h => h.toLowerCase().includes("user"));
-        for (let i=1;i<rows.length;i++){
-          const w = rows[i][workerIdx]?.trim();
-          const u = rows[i][userIdx]?.trim();
-          if (w && u) userMap[w] = u;
+        const rows = text.split("\n").map(r => r.split(",").map(c => c.trim()));
+        const header = rows[0].map(h => h.toLowerCase());
+
+        const idIndex = header.indexOf("workerid");
+        const userIndex = header.indexOf("user");
+        const hostIndex = header.indexOf("host");
+        const usernameIndex = header.indexOf("username");
+
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          if (row[idIndex]) {
+            workerMap[row[idIndex]] = {
+              user: row[userIndex] || "-",
+              host: row[hostIndex] || "",
+              username: row[usernameIndex] || ""
+            };
+          }
         }
-        console.log("User map loaded:", userMap);
-      } catch(e){
-        console.error("Failed to fetch sheet:", e);
+        console.log("✅ Worker map loaded:", workerMap);
+      } catch (err) {
+        console.error("Failed to load worker map:", err);
       }
     }
+    await loadWorkerMap();
 
-    // ---------- TABLE ----------
-    function buildTable(hits){
-      latestHits = hits;
-
-      if (!Array.isArray(hits) || hits.length === 0) {
-        tableContainer.innerHTML = `<div class="empty">No hits in queue.</div>`;
+    function buildTable(hits) {
+      if (!hits.length) {
+        tableContainer.innerHTML = "<p>No HITs in queue</p>";
         return;
       }
 
-      const html = [];
-      html.push(`<table aria-label="MTurk queue">`);
-      html.push(`<thead><tr>
-        <th>Requester</th>
-        <th>Title</th>
-        <th>Reward</th>
-        <th>Worker ID</th>
-        <th>User</th>
-        <th>IP</th>
-        <th>Username</th>
-        <th>Time Remaining</th>
-        <th>Accepted At</th>
-      </tr></thead>`);
-      html.push(`<tbody>`);
+      let html = `
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Worker ID</th>
+              <th>Requester</th>
+              <th>Title</th>
+              <th>Reward</th>
+              <th>Accepted At</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
 
-      for (const hit of hits){
-        const uri = hit.url ? String(hit.url) : "#";
-        const title = safeText(hit.title || hit.requester || "Untitled");
-        const requester = safeText(hit.requester || "Unknown");
-        const reward = (hit.reward == null) ? "-" : `$${Number(hit.reward).toFixed(2)}`;
-        const workerId = safeText(hit.workerId || "-");
-        const user = safeText(hit.user || userMap[hit.workerId] || "-"); // ← merge Sheet + JSONBin
-        const ip = safeText(hit.ip || "34.220.34.216");
-        const username = safeText(hit.username || "administrator");
-        const timeRemaining = fmtTimeRemaining(Number(hit.timeRemainingSeconds));
-        const acceptedAt = fmtAcceptedAt(hit.acceptedAt);
+      for (const hit of hits) {
+        const info = workerMap[hit.workerId] || {};
+        const user = info.user || "-";
+        const host = info.host || "";
+        const username = info.username || "";
 
-        const rdpContent = `full address:s:${ip}\nusername:s:${username}\n`;
-        const blob = new Blob([rdpContent], { type: "application/rdp" });
-        const rdpUrl = URL.createObjectURL(blob);
-
-        html.push(`<tr>
-          <td>${requester}</td>
-          <td><a class="hit-link" href="${uri}" target="_blank" rel="noopener noreferrer">${title}</a></td>
-          <td>${reward}</td>
-          <td><a href="${rdpUrl}" download="${workerId}.rdp">${workerId}</a></td>
-          <td>${user}</td>
-          <td>${ip}</td>
-          <td>${username}</td>
-          <td class="small">${timeRemaining}</td>
-          <td class="small">${acceptedAt}</td>
-        </tr>`);
-      }
-
-      html.push(`</tbody></table>`);
-      tableContainer.innerHTML = html.join("");
-    }
-
-    // ---------- JSONBIN ----------
-    async function fetchBin(){
-      const headers = API_KEY ? { "X-Master-Key": API_KEY, "Content-Type":"application/json" } : { "Content-Type":"application/json" };
-      try {
-        const res = await fetch(BIN_URL, { headers, cache: "no-store" });
-        if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
-        const json = await res.json();
-        let hits = json?.record ?? json;
-        while (hits && typeof hits === "object" && !Array.isArray(hits) && hits.record && Array.isArray(hits.record)) {
-          hits = hits.record;
+        // Construct RDP link
+        let workerCell = hit.workerId;
+        if (host && username) {
+          const rdpUrl = `rdp://full address=s:${host}:3389&username=s:${username}`;
+          workerCell = `<a class="rdp-link" href="${rdpUrl}">${hit.workerId}</a>`;
         }
-        if (!Array.isArray(hits)) throw new Error("Unexpected data format from JSONBin — expected an array at 'record'");
-        buildTable(hits);
-      } catch (err) {
-        console.error("Failed to load JSONBin:", err);
-        tableContainer.innerHTML = `<div class="empty">Failed to load JSONBin: ${safeText(err.message)}</div>`;
+
+        let formattedReward = "-";
+        if (hit.reward) {
+          if (typeof hit.reward === "string" && hit.reward.trim().startsWith("$")) {
+            formattedReward = hit.reward.trim();
+          } else {
+            const num = Number(hit.reward);
+            formattedReward = isNaN(num) ? "-" : `$${num.toFixed(2)}`;
+          }
+        }
+
+        html += `
+          <tr>
+            <td>${user}</td>
+            <td>${workerCell}</td>
+            <td>${hit.requester}</td>
+            <td>${hit.title}</td>
+            <td>${formattedReward}</td>
+            <td>${new Date(hit.acceptedAt).toLocaleString()}</td>
+          </tr>
+        `;
       }
+
+      html += "</tbody></table>";
+      tableContainer.innerHTML = html;
     }
 
-    // ---------- CSV ----------
-    function downloadCSV(){
-      if (!latestHits.length) return alert("No data to export!");
-      const rows = [["WorkerID","User","IP","Username"]];
-      latestHits.forEach(h => {
-        rows.push([
-          h.workerId || "",
-          h.user || userMap[h.workerId] || "",
-          h.ip || "34.220.34.216",
-          h.username || "administrator"
-        ]);
+    onSnapshot(hitsRef, (snapshot) => {
+      const hits = [];
+      const newIds = new Set();
+
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        hits.push(data);
+        if (data.assignmentId) {
+          newIds.add(data.assignmentId);
+        }
       });
-      const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
-      const blob = new Blob([csv], { type:"text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "mturk_queue.csv";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }
 
-    // ---------- INIT ----------
-    refreshBtn.addEventListener("click", fetchBin);
-    csvBtn.addEventListener("click", downloadCSV);
-
-    let intervalId = null;
-    autoRefreshCheckbox.addEventListener("change", (e) => {
-      if (e.target.checked) {
-        intervalId = setInterval(fetchBin, REFRESH_INTERVAL_MS);
-      } else {
-        clearInterval(intervalId);
-        intervalId = null;
+      const added = [...newIds].filter(id => !knownIds.has(id));
+      if (added.length > 0) {
+        notificationSound.currentTime = 0;
+        notificationSound.play().catch(() => {});
       }
-    });
 
-    (async function init(){
-      await fetchUserMap(); // load sheet
-      await fetchBin();     // then load JSONBin
-    })();
+      knownIds = newIds;
+      buildTable(hits);
+    });
   </script>
 </body>
 </html>
