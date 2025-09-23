@@ -122,12 +122,19 @@
       const n = Number(val);
       return Number.isFinite(n) ? `$${n.toFixed(2)}` : "-";
     }
-    function fmtTimer(sec){
-      if (sec == null) return "-";
-      sec = Math.max(0, Math.floor(sec));
-      const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
-      return h>0 ? \`\${h}:\${String(m).padStart(2,"0")}:\${String(s).padStart(2,"0")}\` : \`\${m}:\${String(s).padStart(2,"0")}\`;
-    }
+   function fmtTimer(sec) {
+  if (sec == null) return "-";
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+
+  if (h > 0) {
+    return h + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  } else {
+    return m + ":" + String(s).padStart(2, "0");
+  }
+}
 
     function buildTable(hits){
       rowsState.clear();
