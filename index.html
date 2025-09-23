@@ -3,236 +3,153 @@
 <head>
   <meta charset="utf-8" />
   <title>MTurk Monitor — Firestore</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root{
-      --bg:#f7f8fa;
-      --card:#ffffff;
-      --muted:#6b7280;
-      --accent:#0f62fe;
-      --border:#e6e9ef;
-      --good:#047857;
-      --warn:#b45309;
-      --danger:#b91c1c;
+    body {
+      font-family: Inter, Roboto, Arial, sans-serif;
+      background: #f7f8fa;
+      padding: 20px;
+      color: #111827;
     }
-    *{box-sizing:border-box}
-    body{font-family:Inter,Roboto,Arial,sans-serif;background:var(--bg);margin:0;padding:24px;color:#111827}
-    .wrap{max-width:1200px;margin:0 auto}
-    header{display:flex;align-items:center;justify-content:center;margin-bottom:18px}
-    h1{margin:0;font-size:20px;text-align:center}
-    .card{background:var(--card);border-radius:14px;padding:16px;box-shadow:0 2px 6px rgba(15,20,30,0.06);border:1px solid var(--border)}
-    .toolbar{display:flex;gap:10px;justify-content:center;align-items:center;color:var(--muted);margin-bottom:12px;flex-wrap:wrap}
-    .pill{font-size:12px;color:var(--muted);background:#fff;border:1px solid var(--border);padding:6px 10px;border-radius:999px}
-    table{width:100%;border-collapse:collapse;font-size:14px}
-    thead th{text-align:left;font-size:12px;font-weight:600;color:var(--muted);padding:10px 8px;border-bottom:1px solid var(--border);background:#fff;position:sticky;top:0;z-index:1}
-    tbody td{padding:12px 8px;border-bottom:1px solid #f1f3f5;vertical-align:middle}
-    tbody tr:hover{background:#fbfdff}
-    .reward{font-weight:700;color:var(--good);text-align:right}
-    .timer{font-variant-numeric:tabular-nums}
-    .timer.bad{color:var(--danger);font-weight:700}
-    .timer.warn{color:var(--warn);font-weight:700}
-    .small{font-size:12px;color:var(--muted)}
-    .empty{padding:40px;text-align:center;color:var(--muted)}
-    .titlecell a{color:#0f172a;text-decoration:none}
-    .titlecell a:hover{text-decoration:underline}
-    .badge{display:inline-block;background:#eef2ff;color:#3730a3;border:1px solid #e0e7ff;border-radius:999px;padding:2px 8px;font-size:11px;margin-left:6px}
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: #fff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+    th, td {
+      border: 1px solid #e6e9ef;
+      padding: 10px;
+      font-size: 14px;
+    }
+    th {
+      background: #f1f3f5;
+      text-align: left;
+      font-weight: 600;
+    }
+    td.reward {
+      text-align: right;
+      font-weight: 600;
+      color: #047857;
+    }
+    td.time {
+      text-align: right;
+      font-weight: 600;
+      color: #b91c1c;
+    }
+    tr:hover {
+      background: #f9fcff;
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header><h1>MTurk Monitor (Realtime)</h1></header>
-
-    <div class="toolbar">
-      <span class="pill">Live from Firestore</span>
-      <span class="pill"><span id="hitCount">0</span> active HIT(s)</span>
-      <span class="pill">Timers update every second</span>
-      <span class="pill">Alarm at ≤ 10% time</span>
-    </div>
-
-    <div class="card">
-      <div id="tableContainer">
-        <div class="empty">Connecting to Firestore…</div>
-      </div>
-    </div>
-
-    <p class="small" style="text-align:center;margin-top:10px;">
-      Arrival “ding” plays on the task page only. This page plays an alarm every minute when a HIT is at or below 10% time remaining.
-    </p>
-  </div>
+  <h1>MTurk Monitor (Realtime)</h1>
+  <div id="tableContainer">Loading...</div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, collection, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // 🔑 Firebase Config
+    // 🔑 Firebase Config (replace apiKey/projectId with your values)
     const firebaseConfig = {
       apiKey: "enjoymturk2025",
-      authDomain: "mturk-monitor-71203.firebaseapp.com",
-      projectId: "mturk-monitor-71203",
-      storageBucket: "mturk-monitor-71203.firebasestorage.app",
-      messagingSenderId: "149805882414",
-      appId: "1:149805882414:web:ad879531a567e0b1b713bf"
+      authDomain: "mturk-monitor.firebaseapp.com",
+      projectId: "mturk-monitor",
+      storageBucket: "mturk-monitor.appspot.com",
+      messagingSenderId: "285174080989",
+      appId: "1:285174080989:web:e1f607e6a5f80463278234"
     };
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
+
     const hitsRef = collection(db, "hits");
-    const hitsQuery = query(hitsRef, orderBy("acceptedAt", "desc"));
-
     const tableContainer = document.getElementById("tableContainer");
-    const hitCountEl = document.getElementById("hitCount");
 
-    // 🔊 Alarm sound (fires every minute when ≤10%)
-    const alarmSound = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
-    alarmSound.preload = "auto";
-    function unlockAudioOnce() {
-      alarmSound.play().then(() => { alarmSound.pause(); alarmSound.currentTime = 0; }).catch(()=>{});
-      document.removeEventListener("click", unlockAudioOnce);
-      document.removeEventListener("keydown", unlockAudioOnce);
+    // ⏳ Format countdown timer
+    function fmtTimer(sec) {
+      if (sec == null || isNaN(sec)) return "-";
+      sec = Math.max(0, Math.floor(sec));
+      const h = Math.floor(sec / 3600),
+            m = Math.floor((sec % 3600) / 60),
+            s = sec % 60;
+      return h > 0
+        ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+        : `${m}:${String(s).padStart(2, "0")}`;
     }
-    document.addEventListener("click", unlockAudioOnce);
-    document.addEventListener("keydown", unlockAudioOnce);
 
-    const rowsState = new Map(); // assignmentId -> { initialSec, deadlineMs, tr, tCell, lastAlarmMs }
-
-    // --- Google Sheet User Map ---
-    const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
-    let workerMap = {}; // { workerId: user }
-    async function loadWorkerMap() {
-      try {
-        const res = await fetch(SHEET_CSV_URL);
-        const text = await res.text();
-        const rows = text.trim().split("\n").map(r => r.split(",").map(c => c.trim()));
-        const header = rows[0].map(h => h.toLowerCase());
-        const idIndex = header.indexOf("workerid");
-        const userIndex = header.indexOf("user");
-        for (let i = 1; i < rows.length; i++) {
-          const row = rows[i];
-          if (row[idIndex]) workerMap[row[idIndex]] = row[userIndex] || "-";
-        }
-        console.log("✅ Worker map loaded:", workerMap);
-      } catch (err) {
-        console.error("Failed to load worker map:", err);
-      }
+    // ⏱️ Calculate remaining time
+    function calcRemaining(deadline) {
+      if (!deadline) return null;
+      return (new Date(deadline).getTime() - Date.now()) / 1000;
     }
-    await loadWorkerMap();
 
-    function fmtMoney(val){
-      if (val == null) return "-";
-      const n = Number(val);
-      return Number.isFinite(n) ? `$${n.toFixed(2)}` : "-";
-    }
-   function fmtTimer(sec) {
-  if (sec == null) return "-";
-  sec = Math.max(0, Math.floor(sec));
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-
-  if (h > 0) {
-    return h + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
-  } else {
-    return m + ":" + String(s).padStart(2, "0");
-  }
-}
-
-    function buildTable(hits){
-      rowsState.clear();
-      if (!hits.length){
-        tableContainer.innerHTML = "<div class='empty'>No HITs in queue</div>";
-        hitCountEl.textContent = "0";
+    // 📋 Build table
+    function buildTable(hits) {
+      if (!hits.length) {
+        tableContainer.innerHTML = "<p>No HITs in queue</p>";
         return;
       }
-      hitCountEl.textContent = String(hits.length);
 
-      let html = \`
+      let html = `
         <table>
           <thead>
             <tr>
-              <th>User</th>
-              <th>Worker ID</th>
               <th>Requester</th>
               <th>Title</th>
-              <th style="text-align:right;">Reward</th>
-              <th>Accepted At</th>
+              <th>Reward</th>
+              <th>Worker ID</th>
               <th>Time Remaining</th>
             </tr>
           </thead>
-          <tbody>\`;
+          <tbody>
+      `;
 
-      for (const h of hits){
-        const workerId = (h.workerId || "-").replace(/^Copied/i,"").trim();
-        const user = workerMap[workerId] || "-";
-        const reward = fmtMoney(h.reward);
-        const acc = h.acceptedAt ? new Date(h.acceptedAt).toLocaleString() : "-";
+      for (const hit of hits) {
+        const rewardVal = Number(hit.reward) || 0;
+        const formattedReward = `$${rewardVal.toFixed(2)}`;
 
-        const deadlineMs = h.deadline ? new Date(h.deadline).getTime() : null;
-        const acceptedMs = h.acceptedAt ? new Date(h.acceptedAt).getTime() : null;
-        const initialSec = (deadlineMs && acceptedMs) ? Math.max(1, Math.floor((deadlineMs - acceptedMs)/1000)) : null;
+        const remaining = calcRemaining(hit.deadline);
+        const formattedRemaining = fmtTimer(remaining);
 
-        const assignmentId = h.assignmentId || workerId + acc;
-
-        html += \`
-          <tr data-id="\${assignmentId}">
-            <td>\${user}</td>
-            <td>\${workerId}</td>
-            <td>\${h.requester || "-"}</td>
-            <td class="titlecell"><a target="_blank" href="\${h.url || "#"}">\${h.title || "-"}</a>
-              \${initialSec ? \`<span class="badge">\${Math.floor(initialSec/60)}m</span>\` : ""}</td>
-            <td class="reward">\${reward}</td>
-            <td>\${acc}</td>
-            <td class="timer">—</td>
-          </tr>\`;
-
-        rowsState.set(assignmentId, { initialSec, deadlineMs, lastAlarmMs:0 });
+        html += `
+          <tr>
+            <td>${hit.requester || "-"}</td>
+            <td>${hit.title || "-"}</td>
+            <td class="reward">${formattedReward}</td>
+            <td>${hit.workerId || "-"}</td>
+            <td class="time" data-deadline="${hit.deadline || ""}">
+              ${formattedRemaining}
+            </td>
+          </tr>
+        `;
       }
 
       html += "</tbody></table>";
       tableContainer.innerHTML = html;
-
-      const tbody = tableContainer.querySelector("tbody");
-      for (const [id, st] of rowsState.entries()){
-        const tr = tbody.querySelector(\`tr[data-id="\${CSS.escape(id)}"]\`);
-        st.tr = tr;
-        st.tCell = tr?.querySelector(".timer");
-      }
     }
 
-    function startTicker(){
-      function tick(){
-        const now = Date.now();
-        for (const [id, st] of rowsState.entries()){
-          if (!st.tCell) continue;
-          let remaining = null;
-          if (st.deadlineMs) remaining = Math.max(0, Math.floor((st.deadlineMs - now)/1000));
-
-          let cls="timer";
-          if (st.initialSec && remaining!=null){
-            const pct = remaining/st.initialSec;
-            if (pct<=0.10) cls+=" bad";
-            else if (pct<=0.25) cls+=" warn";
-          }
-          st.tCell.className=cls;
-          st.tCell.textContent=fmtTimer(remaining);
-
-          if (st.initialSec && remaining>0 && (remaining/st.initialSec)<=0.10){
-            if (now-st.lastAlarmMs>=60000){
-              alarmSound.currentTime=0; alarmSound.play().catch(()=>{});
-              st.lastAlarmMs=now;
-            }
-          }
-        }
-        requestAnimationFrame(tick);
-      }
-      requestAnimationFrame(tick);
-    }
-
-    onSnapshot(hitsQuery,(snap)=>{
-      const hits=[]; snap.forEach(d=>hits.push(d.data()));
+    // 🔴 Firestore realtime subscription
+    onSnapshot(hitsRef, (snapshot) => {
+      const hits = [];
+      snapshot.forEach(doc => hits.push(doc.data()));
       buildTable(hits);
+      console.log("🔄 Firestore update:", hits.length);
     });
 
-    startTicker();
+    // 🔄 Refresh countdown every 30s
+    setInterval(() => {
+      document.querySelectorAll("td[data-deadline]").forEach(td => {
+        const deadline = td.getAttribute("data-deadline");
+        td.textContent = fmtTimer(calcRemaining(deadline));
+      });
+    }, 30000);
   </script>
 </body>
 </html>
