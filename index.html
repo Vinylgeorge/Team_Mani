@@ -1,52 +1,8 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>MTurk Monitor — Firestore</title>
-  <style>
-    body {
-      font-family: Inter, Roboto, Arial, sans-serif;
-      background: #f7f8fa;
-      padding: 20px;
-      color: #111827;
-    }
-    h1 {
-      text-align: center;
-      margin-bottom: 20px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-      background: #fff;
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-    }
-    th, td {
-      border: 1px solid #e6e9ef;
-      padding: 10px;
-      font-size: 14px;
-    }
-    th {
-      background: #f1f3f5;
-      text-align: left;
-      font-weight: 600;
-    }
-    td.reward {
-      text-align: right;
-      font-weight: 600;
-      color: #047857;
-    }
-    tr:hover {
-      background: #f9fcff;
-    }
-  </style>
-</head>
-<body>
-  <h1>MTurk Monitor (Realtime)</h1>
-  <div id="tableContainer">Loading...</div>
-
+  <meta charset="UTF-8">
+  <title>📊 MTurk HIT Monitor</title>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -56,56 +12,21 @@
       apiKey: "enjoymturk2025",
       authDomain: "mturk-monitor-71203.firebaseapp.com",
       projectId: "mturk-monitor-71203",
-      storageBucket: "mturk-monitor-71203.appspot.com",
+      storageBucket: "mturk-monitor-71203.firebasestorage.app",
       messagingSenderId: "149805882414",
       appId: "1:149805882414:web:ad879531a567e0b1b713bf"
     };
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
-    const hitsRef = collection(db, "hits");
-    const tableContainer = document.getElementById("tableContainer");
 
-    // --- Load Worker Map from Google Sheet ---
-    const SHEET_CSV_URL =
-      "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
-
-    let workerMap = {}; // { workerId → { user } }
-
-    async function loadWorkerMap() {
-      try {
-        const res = await fetch(SHEET_CSV_URL);
-        const text = await res.text();
-        const rows = text.split("\n").map(r => r.split(",").map(c => c.trim()));
-        const header = rows[0].map(h => h.toLowerCase());
-
-        const idIndex = header.indexOf("workerid");
-        const userIndex = header.indexOf("user");
-
-        for (let i = 1; i < rows.length; i++) {
-          const row = rows[i];
-          if (row[idIndex]) {
-            workerMap[row[idIndex]] = {
-              user: row[userIndex] || "-"
-            };
-          }
-        }
-        console.log("✅ Worker map loaded:", workerMap);
-      } catch (err) {
-        console.error("❌ Failed to load worker map:", err);
-      }
-    }
-    await loadWorkerMap();
-
-    // --- Notification Sound ---
-    const notificationSound = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
-    notificationSound.preload = "auto";
-
-    // Browser requires first user interaction to unlock audio
+    // 🔊 Notification sound
+    const notifSound = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
+    notifSound.preload = "auto";
     function unlockAudio() {
-      notificationSound.play().then(() => {
-        notificationSound.pause();
-        notificationSound.currentTime = 0;
+      notifSound.play().then(() => {
+        notifSound.pause();
+        notifSound.currentTime = 0;
       }).catch(() => {});
       document.removeEventListener("click", unlockAudio);
       document.removeEventListener("keydown", unlockAudio);
@@ -113,88 +34,106 @@
     document.addEventListener("click", unlockAudio);
     document.addEventListener("keydown", unlockAudio);
 
-    // --- Helpers ---
-    function fmtReward(r) {
-      const num = Number(r);
-      return isNaN(num) ? "-" : `$${num.toFixed(2)}`;
+    // 📒 WorkerId → Username mapping
+    let workerMap = {};
+    async function loadWorkerMap() {
+      // ⚠️ You must "Publish to web" your Google Sheet as CSV
+      const url = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
+      const res = await fetch(url);
+      const text = await res.text();
+      text.split("\n").slice(1).forEach(row => {
+        const [workerId, username] = row.split(",");
+        if (workerId && username) workerMap[workerId.trim()] = username.trim();
+      });
     }
 
+    // 🕒 Format timer
     function fmtTimer(sec) {
       if (sec == null) return "-";
       sec = Math.max(0, Math.floor(sec));
       const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
-      return h>0
-        ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`
-        : `${m}:${String(s).padStart(2,"0")}`;
+      return h>0 ? \`\${h}:\${String(m).padStart(2,"0")}:\${String(s).padStart(2,"0")}\`
+                 : \`\${m}:\${String(s).padStart(2,"0")}\`;
     }
 
-    function buildTable(hits) {
-      if (!hits.length) {
-        tableContainer.innerHTML = "<p>No HITs in queue</p>";
-        return;
-      }
-
-      let html = `
-        <table>
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Worker ID</th>
-              <th>Requester</th>
-              <th>Title</th>
-              <th>Reward</th>
-              <th>Time Remaining</th>
-              <th>Accepted At</th>
-            </tr>
-          </thead>
-          <tbody>
-      `;
-
-      for (const hit of hits) {
-        const map = workerMap[hit.workerId] || {};
-        const user = map.user || "-";
-
-        html += `
-          <tr>
-            <td>${user}</td>
-            <td>${hit.workerId || "-"}</td>
-            <td>${hit.requester || "-"}</td>
-            <td>${hit.title || "-"}</td>
-            <td class="reward">${fmtReward(hit.reward)}</td>
-            <td>${fmtTimer(hit.remainingSeconds)}</td>
-            <td>${hit.acceptedAt ? new Date(hit.acceptedAt).toLocaleString() : "-"}</td>
-          </tr>
-        `;
-      }
-
-      html += "</tbody></table>";
-      tableContainer.innerHTML = html;
-    }
-
-    // --- Track known IDs to detect NEW hits ---
-    let knownIds = new Set();
-
-    onSnapshot(hitsRef, (snapshot) => {
-      const hits = [];
-      const newIds = new Set();
-
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        hits.push(data);
-        if (data.assignmentId) newIds.add(data.assignmentId);
+    // 🖼️ Render table
+    function renderTable(hits) {
+      const tbody = document.querySelector("#hits-body");
+      tbody.innerHTML = "";
+      hits.forEach(h => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = \`
+          <td>\${h.assignmentId}</td>
+          <td>\${workerMap[h.workerId] || h.workerId}</td>
+          <td>\${h.requester}</td>
+          <td>\${h.title}</td>
+          <td>\$ \${h.reward.toFixed(2)}</td>
+          <td class="remain" data-seconds="\${h.remainingSeconds || ""}">\${fmtTimer(h.remainingSeconds)}</td>
+        \`;
+        tbody.appendChild(tr);
       });
+    }
 
-      // Detect new hits
-      const added = [...newIds].filter(id => !knownIds.has(id));
-      if (added.length > 0) {
-        console.log("🔔 New HIT(s):", added);
-        notificationSound.currentTime = 0;
-        notificationSound.play().catch(() => {});
-      }
+    // ⏱️ Update countdown every 30s
+    function tickCountdowns() {
+      document.querySelectorAll("td.remain").forEach(td => {
+        const sec = parseInt(td.dataset.seconds);
+        if (isNaN(sec)) return;
+        const newVal = Math.max(0, parseInt(td.dataset.seconds)-30);
+        td.dataset.seconds = newVal;
+        td.textContent = fmtTimer(newVal);
+      });
+    }
+    setInterval(tickCountdowns, 30000);
 
-      knownIds = newIds;
-      buildTable(hits);
-    });
+    // 🔄 Firestore live updates
+    let knownIds = new Set();
+    async function init() {
+      await loadWorkerMap();
+      onSnapshot(collection(db, "hits"), snap => {
+        const hits = [];
+        snap.forEach(doc => hits.push(doc.data()));
+
+        // sort by deadline soonest first
+        hits.sort((a,b) => (a.remainingSeconds||999999) - (b.remainingSeconds||999999));
+
+        // detect new hits from task page only
+        for (const h of hits) {
+          if (!knownIds.has(h.assignmentId) && h.apiKey === "enjoymturk2025" && h.deadline === null) {
+            // deadline=null → came from task page (since queue fills deadlines)
+            try { notifSound.play(); } catch {}
+          }
+        }
+
+        knownIds = new Set(hits.map(h => h.assignmentId));
+        renderTable(hits);
+      });
+    }
+    init();
   </script>
+
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+    th { background: #f5f5f5; }
+    tr:nth-child(even) { background: #fafafa; }
+  </style>
+</head>
+<body>
+  <h2>📊 MTurk HIT Monitor</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Assignment ID</th>
+        <th>Worker</th>
+        <th>Requester</th>
+        <th>Title</th>
+        <th>Reward</th>
+        <th>Time Remaining</th>
+      </tr>
+    </thead>
+    <tbody id="hits-body"></tbody>
+  </table>
 </body>
 </html>
