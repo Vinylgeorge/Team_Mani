@@ -38,11 +38,6 @@
       font-weight: 600;
       color: #047857;
     }
-    td.time {
-      text-align: right;
-      font-weight: 600;
-      color: #b91c1c;
-    }
     tr:hover {
       background: #f9fcff;
     }
@@ -56,41 +51,83 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // 🔑 Firebase Config (replace apiKey/projectId with your values)
+    // 🔑 Firebase Config
     const firebaseConfig = {
       apiKey: "enjoymturk2025",
       authDomain: "mturk-monitor-71203.firebaseapp.com",
       projectId: "mturk-monitor-71203",
-      storageBucket: "mturk-monitor-71203.firebasestorage.app",
+      storageBucket: "mturk-monitor-71203.appspot.com",
       messagingSenderId: "149805882414",
       appId: "1:149805882414:web:ad879531a567e0b1b713bf"
     };
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
-
     const hitsRef = collection(db, "hits");
     const tableContainer = document.getElementById("tableContainer");
 
-    // ⏳ Format countdown timer
+    // --- Load Worker Map from Google Sheet ---
+    const SHEET_CSV_URL =
+      "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
+
+    let workerMap = {}; // { workerId → { user } }
+
+    async function loadWorkerMap() {
+      try {
+        const res = await fetch(SHEET_CSV_URL);
+        const text = await res.text();
+        const rows = text.split("\n").map(r => r.split(",").map(c => c.trim()));
+        const header = rows[0].map(h => h.toLowerCase());
+
+        const idIndex = header.indexOf("workerid");
+        const userIndex = header.indexOf("user");
+
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          if (row[idIndex]) {
+            workerMap[row[idIndex]] = {
+              user: row[userIndex] || "-"
+            };
+          }
+        }
+        console.log("✅ Worker map loaded:", workerMap);
+      } catch (err) {
+        console.error("❌ Failed to load worker map:", err);
+      }
+    }
+    await loadWorkerMap();
+
+    // --- Notification Sound ---
+    const notificationSound = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
+    notificationSound.preload = "auto";
+
+    // Browser requires first user interaction to unlock audio
+    function unlockAudio() {
+      notificationSound.play().then(() => {
+        notificationSound.pause();
+        notificationSound.currentTime = 0;
+      }).catch(() => {});
+      document.removeEventListener("click", unlockAudio);
+      document.removeEventListener("keydown", unlockAudio);
+    }
+    document.addEventListener("click", unlockAudio);
+    document.addEventListener("keydown", unlockAudio);
+
+    // --- Helpers ---
+    function fmtReward(r) {
+      const num = Number(r);
+      return isNaN(num) ? "-" : `$${num.toFixed(2)}`;
+    }
+
     function fmtTimer(sec) {
-      if (sec == null || isNaN(sec)) return "-";
+      if (sec == null) return "-";
       sec = Math.max(0, Math.floor(sec));
-      const h = Math.floor(sec / 3600),
-            m = Math.floor((sec % 3600) / 60),
-            s = sec % 60;
-      return h > 0
-        ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
-        : `${m}:${String(s).padStart(2, "0")}`;
+      const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+      return h>0
+        ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`
+        : `${m}:${String(s).padStart(2,"0")}`;
     }
 
-    // ⏱️ Calculate remaining time
-    function calcRemaining(deadline) {
-      if (!deadline) return null;
-      return (new Date(deadline).getTime() - Date.now()) / 1000;
-    }
-
-    // 📋 Build table
     function buildTable(hits) {
       if (!hits.length) {
         tableContainer.innerHTML = "<p>No HITs in queue</p>";
@@ -101,32 +138,31 @@
         <table>
           <thead>
             <tr>
+              <th>User</th>
+              <th>Worker ID</th>
               <th>Requester</th>
               <th>Title</th>
               <th>Reward</th>
-              <th>Worker ID</th>
               <th>Time Remaining</th>
+              <th>Accepted At</th>
             </tr>
           </thead>
           <tbody>
       `;
 
       for (const hit of hits) {
-        const rewardVal = Number(hit.reward) || 0;
-        const formattedReward = `$${rewardVal.toFixed(2)}`;
-
-        const remaining = calcRemaining(hit.deadline);
-        const formattedRemaining = fmtTimer(remaining);
+        const map = workerMap[hit.workerId] || {};
+        const user = map.user || "-";
 
         html += `
           <tr>
+            <td>${user}</td>
+            <td>${hit.workerId || "-"}</td>
             <td>${hit.requester || "-"}</td>
             <td>${hit.title || "-"}</td>
-            <td class="reward">${formattedReward}</td>
-            <td>${hit.workerId || "-"}</td>
-            <td class="time" data-deadline="${hit.deadline || ""}">
-              ${formattedRemaining}
-            </td>
+            <td class="reward">${fmtReward(hit.reward)}</td>
+            <td>${fmtTimer(hit.remainingSeconds)}</td>
+            <td>${hit.acceptedAt ? new Date(hit.acceptedAt).toLocaleString() : "-"}</td>
           </tr>
         `;
       }
@@ -135,21 +171,30 @@
       tableContainer.innerHTML = html;
     }
 
-    // 🔴 Firestore realtime subscription
+    // --- Track known IDs to detect NEW hits ---
+    let knownIds = new Set();
+
     onSnapshot(hitsRef, (snapshot) => {
       const hits = [];
-      snapshot.forEach(doc => hits.push(doc.data()));
-      buildTable(hits);
-      console.log("🔄 Firestore update:", hits.length);
-    });
+      const newIds = new Set();
 
-    // 🔄 Refresh countdown every 30s
-    setInterval(() => {
-      document.querySelectorAll("td[data-deadline]").forEach(td => {
-        const deadline = td.getAttribute("data-deadline");
-        td.textContent = fmtTimer(calcRemaining(deadline));
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        hits.push(data);
+        if (data.assignmentId) newIds.add(data.assignmentId);
       });
-    }, 30000);
+
+      // Detect new hits
+      const added = [...newIds].filter(id => !knownIds.has(id));
+      if (added.length > 0) {
+        console.log("🔔 New HIT(s):", added);
+        notificationSound.currentTime = 0;
+        notificationSound.play().catch(() => {});
+      }
+
+      knownIds = newIds;
+      buildTable(hits);
+    });
   </script>
 </body>
 </html>
