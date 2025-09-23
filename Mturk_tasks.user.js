@@ -3,12 +3,12 @@
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant        none
-// @version     1.0
+// @version     4.2
 // @updateURL    https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js
 // @downloadURL  https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js
 // ==/UserScript==
 
-((async function () {
+(async function () {
   'use strict';
 
   // Dynamically load Firebase SDK
