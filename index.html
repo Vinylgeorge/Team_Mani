@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>MTurk Monitor — Firestore + User Map</title>
+  <title>MTurk Monitor — Firestore</title>
   <style>
     body {
       font-family: Inter, Roboto, Arial, sans-serif;
@@ -62,10 +62,6 @@
       color: #6b7280;
       font-size: 15px;
     }
-    td.user {
-      color: #4b5563;
-      font-style: italic;
-    }
   </style>
 </head>
 <body>
@@ -80,12 +76,12 @@
 
     // 🔑 Firebase Config
     const firebaseConfig = {
-      apiKey: "AIzaSyAC8nTZp3jHtan1wNOn5AMlBdIjAhUOuao",
-  authDomain: "mturk-monitor-71203.firebaseapp.com",
-  projectId: "mturk-monitor-71203",
-  storageBucket: "mturk-monitor-71203.firebasestorage.app",
-  messagingSenderId: "149805882414",
-  appId: "1:149805882414:web:ad879531a567e0b1b713bf"
+      apiKey: "AIzaSyD_FH-65A526z8g9iGhSYKulS4yiv5e6Ys",
+      authDomain: "mturk-monitor.firebaseapp.com",
+      projectId: "mturk-monitor",
+      storageBucket: "mturk-monitor.firebasestorage.app",
+      messagingSenderId: "285174080989",
+      appId: "1:285174080989:web:e1f607e6a5f80463278234"
     };
 
     const app = initializeApp(firebaseConfig);
@@ -94,40 +90,24 @@
     const hitsRef = collection(db, "hits");
     const tableContainer = document.getElementById("tableContainer");
 
-    // Holder for user map: WorkerID -> User
+    // 🗺️ WorkerID → User mapping (loaded from Google Sheet)
     let userMap = {};
 
-    // Fetch mapping from Google Sheets
     async function loadUserMap() {
       try {
-        const sheetId = "1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM";
-        const sheetName = "Sheet1";  // change if it's different
-        const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
-
-        const resp = await fetch(csvUrl);
-        const text = await resp.text();
-
+        const sheetUrl = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
+        const res = await fetch(sheetUrl);
+        const text = await res.text();
         const rows = text.trim().split("\n").map(r => r.split(","));
-        const headers = rows[0].map(h => h.trim().toLowerCase());
-        const workerIdx = headers.findIndex(h => h.includes("worker"));
-        const userIdx = headers.findIndex(h => h.includes("user"));
-
-        if (workerIdx < 0 || userIdx < 0) {
-          console.warn("Couldn't find Worker or User column in sheet headers", headers);
-          return;
-        }
-
-        for (let i = 1; i < rows.length; i++) {
-          const row = rows[i];
-          const w = row[workerIdx]?.trim();
-          const u = row[userIdx]?.trim();
-          if (w && u) {
-            userMap[w] = u;
+        // assumes: first col = WorkerID, second col = User
+        rows.forEach(r => {
+          if (r[0] && r[1]) {
+            userMap[r[0].trim()] = r[1].trim();
           }
-        }
-        console.log("✅ Loaded userMap:", userMap);
-      } catch (e) {
-        console.error("Error loading user map:", e);
+        });
+        console.log("📌 User map loaded:", userMap);
+      } catch (err) {
+        console.error("Failed to load user map:", err);
       }
     }
 
@@ -153,22 +133,23 @@
       `;
 
       for (const hit of hits) {
+        // ✅ Safely parse reward
         let rewardVal = 0;
         if (hit.reward !== undefined && hit.reward !== null) {
           rewardVal = parseFloat(String(hit.reward).replace(/[^0-9.]/g, "")) || 0;
         }
         const formattedReward = `$${rewardVal.toFixed(2)}`;
 
-        const worker = hit.workerId || "-";
-        const user = userMap[worker] || "-";
+        // ✅ Map user
+        const user = userMap[hit.workerId] || "-";
 
         html += `
           <tr>
             <td>${hit.requester || "-"}</td>
             <td>${hit.title || "-"}</td>
             <td class="reward">${formattedReward}</td>
-            <td>${worker}</td>
-            <td class="user">${user}</td>
+            <td>${hit.workerId || "-"}</td>
+            <td>${user}</td>
             <td>${hit.acceptedAt ? new Date(hit.acceptedAt).toLocaleString() : "-"}</td>
           </tr>
         `;
@@ -178,21 +159,16 @@
       tableContainer.innerHTML = html;
     }
 
-    async function init() {
-      await loadUserMap();
+    // 🔴 Realtime Firestore Subscription
+    onSnapshot(hitsRef, (snapshot) => {
+      const hits = [];
+      snapshot.forEach(doc => hits.push(doc.data()));
+      buildTable(hits);
+      console.log("🔄 Firestore update:", hits.length);
+    });
 
-      onSnapshot(hitsRef, (snapshot) => {
-        const hits = [];
-        snapshot.forEach(doc => hits.push(doc.data()));
-        buildTable(hits);
-        console.log("🔄 Firestore update:", hits.length);
-      }, (err) => {
-        console.error("Firestore error on snapshot:", err);
-        tableContainer.innerHTML = `<div class="empty">Error: ${err.message}</div>`;
-      });
-    }
-
-    init();
+    // Load mapping once at startup
+    loadUserMap();
   </script>
 </body>
 </html>
