@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>MTurk Monitor — Firestore</title>
+  <title>MTurk Monitor — Firestore + User Map</title>
   <style>
     body {
       font-family: Inter, Roboto, Arial, sans-serif;
@@ -62,6 +62,10 @@
       color: #6b7280;
       font-size: 15px;
     }
+    td.user {
+      color: #4b5563;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
@@ -90,12 +94,42 @@
     const hitsRef = collection(db, "hits");
     const tableContainer = document.getElementById("tableContainer");
 
-    // 🗺️ WorkerID → User mapping (extend or fetch from Google Sheet if needed)
-    const userMap = {
-      "A1BC1PGU8WVAL2": "Riva Stephan",
-      "A3XYZ123456789": "John Worker",
-      "A7LMNOP9876543": "Jane Worker"
-    };
+    // Holder for user map: WorkerID -> User
+    let userMap = {};
+
+    // Fetch mapping from Google Sheets
+    async function loadUserMap() {
+      try {
+        const sheetId = "1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM";
+        const sheetName = "Sheet1";  // change if it's different
+        const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
+
+        const resp = await fetch(csvUrl);
+        const text = await resp.text();
+
+        const rows = text.trim().split("\n").map(r => r.split(","));
+        const headers = rows[0].map(h => h.trim().toLowerCase());
+        const workerIdx = headers.findIndex(h => h.includes("worker"));
+        const userIdx = headers.findIndex(h => h.includes("user"));
+
+        if (workerIdx < 0 || userIdx < 0) {
+          console.warn("Couldn't find Worker or User column in sheet headers", headers);
+          return;
+        }
+
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          const w = row[workerIdx]?.trim();
+          const u = row[userIdx]?.trim();
+          if (w && u) {
+            userMap[w] = u;
+          }
+        }
+        console.log("✅ Loaded userMap:", userMap);
+      } catch (e) {
+        console.error("Error loading user map:", e);
+      }
+    }
 
     function buildTable(hits) {
       if (!hits.length) {
@@ -119,23 +153,22 @@
       `;
 
       for (const hit of hits) {
-        // ✅ Safely parse reward
         let rewardVal = 0;
         if (hit.reward !== undefined && hit.reward !== null) {
           rewardVal = parseFloat(String(hit.reward).replace(/[^0-9.]/g, "")) || 0;
         }
         const formattedReward = `$${rewardVal.toFixed(2)}`;
 
-        // ✅ Map user from WorkerID
-        const user = userMap[hit.workerId] || "-";
+        const worker = hit.workerId || "-";
+        const user = userMap[worker] || "-";
 
         html += `
           <tr>
             <td>${hit.requester || "-"}</td>
             <td>${hit.title || "-"}</td>
             <td class="reward">${formattedReward}</td>
-            <td>${hit.workerId || "-"}</td>
-            <td>${user}</td>
+            <td>${worker}</td>
+            <td class="user">${user}</td>
             <td>${hit.acceptedAt ? new Date(hit.acceptedAt).toLocaleString() : "-"}</td>
           </tr>
         `;
@@ -145,13 +178,21 @@
       tableContainer.innerHTML = html;
     }
 
-    // 🔴 Realtime Firestore Subscription
-    onSnapshot(hitsRef, (snapshot) => {
-      const hits = [];
-      snapshot.forEach(doc => hits.push(doc.data()));
-      buildTable(hits);
-      console.log("🔄 Firestore update:", hits.length);
-    });
+    async function init() {
+      await loadUserMap();
+
+      onSnapshot(hitsRef, (snapshot) => {
+        const hits = [];
+        snapshot.forEach(doc => hits.push(doc.data()));
+        buildTable(hits);
+        console.log("🔄 Firestore update:", hits.length);
+      }, (err) => {
+        console.error("Firestore error on snapshot:", err);
+        tableContainer.innerHTML = `<div class="empty">Error: ${err.message}</div>`;
+      });
+    }
+
+    init();
   </script>
 </body>
 </html>
