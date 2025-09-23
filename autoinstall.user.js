@@ -13,7 +13,8 @@
 
   const scripts = [
     "https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js",
-    "https://raw.githubusercontent.com/Vinylgeorge/Team-Mani/refs/heads/main/queuerrv.user.js"
+    "https://raw.githubusercontent.com/Vinylgeorge/Team-Mani/refs/heads/main/queuerrv.user.js",
+    "https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/refresh.user.js"
   ];
 
   // Open each script in new tab once
