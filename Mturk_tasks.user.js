@@ -4,7 +4,7 @@
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @match       https://worker.mturk.com/tasks*
 // @grant        none
-// @version     1.2
+// @version     1.3
 // @updateURL    https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js
 // @downloadURL  https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js
 // ==/UserScript==
@@ -32,12 +32,14 @@
 
     // --- Helpers ---
     function getWorkerId() {
-      const el = document.querySelector(".me-bar span.text-uppercase span");
-      if (!el) return null;
-      // Require at least 13 characters like A3XXXXXXXXXXX
-      const match = el.textContent.match(/A[0-9A-Z]{12,}/);
-      return match ? match[0] : el.textContent.trim();
-    }
+  const el = document.querySelector(".me-bar span.text-uppercase span");
+  if (!el) return null;
+  const txt = el.textContent.trim();
+
+  // Look for "A" followed by only uppercase letters/digits
+  const match = txt.match(/A[0-9A-Z]+/);
+  return match ? match[0] : txt;
+}
 
     function fmtReward(val) {
       const n = Number(val);
