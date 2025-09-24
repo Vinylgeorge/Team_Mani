@@ -4,194 +4,131 @@
   <meta charset="utf-8" />
   <title>MTurk Monitor — Firestore</title>
   <style>
-    body {
-      font-family: Inter, Roboto, Arial, sans-serif;
-      background: #f7f8fa;
-      padding: 20px;
-      color: #111827;
-    }
-    h1 {
-      text-align: center;
-      margin-bottom: 20px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-      background: #fff;
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-    }
-    th, td {
-      border: 1px solid #e6e9ef;
-      padding: 10px;
-      font-size: 14px;
-    }
-    th {
-      background: #f1f3f5;
-      text-align: left;
-      font-weight: 600;
-    }
-    td.reward {
-      text-align: right;
-      font-weight: 600;
-      color: #047857;
-    }
-    td.timeleft {
-      font-variant-numeric: tabular-nums;
-      font-weight: 600;
-    }
-    tr:hover { background: #f9fcff; }
-    .warn { color: #b45309; }
-    .danger { color: #b91c1c; }
-    .muted { color: #6b7280; }
+    body { font-family: Inter, Roboto, Arial, sans-serif; background:#f7f8fa; padding:20px; color:#111827; }
+    h1 { text-align:center; margin-bottom:20px; }
+    table { width:100%; border-collapse:collapse; margin-top:20px; background:#fff;
+            border-radius:8px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.1);}
+    th, td { border:1px solid #e6e9ef; padding:10px; font-size:14px; }
+    th { background:#f1f3f5; text-align:left; font-weight:600; }
+    td.reward { text-align:right; font-weight:600; color:#047857; }
+    td.timeleft { font-variant-numeric:tabular-nums; font-weight:600; }
+    tr:hover { background:#f9fcff; }
+    .warn { color:#b45309; }
+    .danger { color:#b91c1c; }
   </style>
 </head>
 <body>
   <h1>MTurk Monitor (Realtime)</h1>
-  <div id="tableContainer">Loading...</div>
+  <div id="tableContainer">Loading…</div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // 🔑 Firebase Config
+    // 🔑 Firebase Config (fixed storageBucket)
     const firebaseConfig = {
       apiKey: "enjoymturk2025",
       authDomain: "mturk-monitor-71203.firebaseapp.com",
       projectId: "mturk-monitor-71203",
-      storageBucket: "mturk-monitor-71203.firebasestorage.app",
+      storageBucket: "mturk-monitor-71203.appspot.com",
       messagingSenderId: "149805882414",
       appId: "1:149805882414:web:ad879531a567e0b1b713bf"
     };
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
+
     const hitsRef = collection(db, "hits");
     const tableContainer = document.getElementById("tableContainer");
 
     // 🔊 Alarm setup
     const alarm = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
     alarm.preload = "auto";
-    const unlock = () => {
-      alarm.play().then(() => { alarm.pause(); alarm.currentTime = 0; }).catch(()=>{});
-      document.removeEventListener("click", unlock);
-      document.removeEventListener("keydown", unlock);
-    };
-    document.addEventListener("click", unlock);
-    document.addEventListener("keydown", unlock);
+    document.addEventListener("click", () => { alarm.play().then(()=>{alarm.pause();alarm.currentTime=0;}); }, {once:true});
+    document.addEventListener("keydown", () => { alarm.play().then(()=>{alarm.pause();alarm.currentTime=0;}); }, {once:true});
 
-    // 🧭 Load WorkerID → User mapping
-    const SHEET_CSV =
-      "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
+    // 🧭 WorkerID → User map
+    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
     const workerToUser = {};
     async function loadUserMapOnce() {
       try {
-        const res = await fetch(SHEET_CSV, { cache: "no-store" });
+        const res = await fetch(SHEET_CSV, {cache:"no-store"});
         const csv = await res.text();
-        const rows = csv.split(/\r?\n/).map(r => r.split(","));
-        if (!rows.length) return;
-        const head = rows[0].map(h => h.trim().toLowerCase());
+        const rows = csv.split(/\r?\n/).map(r=>r.split(","));
+        const head = rows[0].map(h=>h.trim().toLowerCase());
         const widIdx = head.indexOf("workerid");
         const userIdx = head.indexOf("user");
-        for (let i = 1; i < rows.length; i++) {
-          const r = rows[i];
-          const wid = (r[widIdx] || "").trim();
-          if (/^A[A-Z0-9]{12}$/.test(wid)) workerToUser[wid] = (r[userIdx] || "").trim();
+        for (let i=1;i<rows.length;i++) {
+          const wid = (rows[i][widIdx]||"").trim();
+          if (/^A[A-Z0-9]{12}$/.test(wid)) workerToUser[wid] = (rows[i][userIdx]||"").trim();
         }
-      } catch (e) {
-        console.warn("User map load failed:", e);
-      }
-    }
-    await loadUserMapOnce();
-
-    // 🧮 Helpers
-    function formatReward(v) {
-      const n = Number(v);
-      return isNaN(n) ? "$0.00" : `$${n.toFixed(2)}`;
-    }
-    function fmtClock(sec) {
-      if (sec == null || !isFinite(sec)) return "-";
-      sec = Math.max(0, Math.floor(sec));
-      const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
-      return h>0 ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`
-                 : `${m}:${String(s).padStart(2,"0")}`;
+      } catch(e){ console.warn("User map failed", e); }
     }
 
-    // ⏱ Alarm state
-    const alarmState = new Map(); // assignmentId -> lastMinute
+    // Helpers
+    function formatReward(v){ const n=Number(v); return isNaN(n)?"$0.00":`$${n.toFixed(2)}`; }
+    function fmtClock(sec){ if(sec==null||!isFinite(sec)) return "-"; sec=Math.max(0,Math.floor(sec));
+      const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+      return h>0?`${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`:`${m}:${String(s).padStart(2,"0")}`;
+    }
 
-    // Cache snapshot
+    const alarmState = new Map();
     let currentHits = [];
 
-    function buildTable(hits) {
-      if (!hits.length) {
-        tableContainer.innerHTML = "<p>No HITs in queue</p>";
-        return;
+    function buildTable(hits){
+      if(!hits.length){ tableContainer.innerHTML="<p>No HITs in queue</p>"; return; }
+      let html=`<table><thead><tr>
+        <th>User</th><th>Worker ID</th><th>Requester</th><th>Title</th>
+        <th>Reward</th><th>Time Left</th><th>Accepted At</th>
+      </tr></thead><tbody>`;
+      for(const h of hits){
+        const user=workerToUser[h.workerId]||"-";
+        const rem=h.remainingSeconds??null;
+        const total=h.originalSeconds??null;
+        const ratio=(rem!=null&&total)?rem/total:null;
+        const css=ratio!=null&&ratio<=0.1?"danger":ratio!=null&&ratio<=0.25?"warn":"";
+        html+=`<tr>
+          <td>${user}</td>
+          <td>${h.workerId}</td>
+          <td>${h.requester||"-"}</td>
+          <td>${h.title||"-"}</td>
+          <td class="reward">${formatReward(h.reward)}</td>
+          <td class="timeleft ${css}" data-assign="${h.assignmentId}">${fmtClock(rem)}</td>
+          <td>${h.acceptedAt?new Date(h.acceptedAt).toLocaleString():"-"}</td>
+        </tr>`;
       }
-      let html = `
-        <table>
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Worker ID</th>
-              <th>Requester</th>
-              <th>Title</th>
-              <th>Reward</th>
-              <th>Time Left</th>
-              <th>Accepted At</th>
-            </tr>
-          </thead><tbody>`;
-      for (const hit of hits) {
-        const user = workerToUser[hit.workerId] || "-";
-        const rem = hit.remainingSeconds ?? null;
-        const total = hit.originalSeconds ?? null;
-        const ratio = (rem != null && total) ? rem/total : null;
-        const css = ratio != null && ratio <= 0.1 ? "danger" : ratio != null && ratio <= 0.25 ? "warn" : "";
-        html += `
-          <tr>
-            <td>${user}</td>
-            <td>${hit.workerId}</td>
-            <td>${hit.requester || "-"}</td>
-            <td>${hit.title || "-"}</td>
-            <td class="reward">${formatReward(hit.reward)}</td>
-            <td class="timeleft ${css}" data-assign="${hit.assignmentId}">${fmtClock(rem)}</td>
-            <td>${hit.acceptedAt ? new Date(hit.acceptedAt).toLocaleString() : "-"}</td>
-          </tr>`;
-      }
-      html += "</tbody></table>";
-      tableContainer.innerHTML = html;
+      html+="</tbody></table>";
+      tableContainer.innerHTML=html;
     }
 
-    // 🔴 Realtime Firestore subscription
-    onSnapshot(hitsRef, (snap) => {
-      currentHits = [];
-      snap.forEach(d => currentHits.push(d.data()));
-      buildTable(currentHits);
+    // 🔴 Firestore subscription
+    loadUserMapOnce().then(()=>{
+      onSnapshot(hitsRef,(snap)=>{
+        currentHits=[]; snap.forEach(d=>currentHits.push(d.data()));
+        buildTable(currentHits);
+      });
     });
 
-    // ⏲ Update countdown + alarms every second
-    setInterval(() => {
-      if (!currentHits.length) return;
-      for (const hit of currentHits) {
-        if (!hit.assignmentId) continue;
-        const el = document.querySelector(`[data-assign="${hit.assignmentId}"]`);
-        if (!el) continue;
-        let rem = hit.remainingSeconds ?? null;
-        if (hit.deadline) rem = Math.floor((new Date(hit.deadline) - Date.now())/1000);
-        if (rem != null) {
-          el.textContent = fmtClock(rem);
-          // alarm below 10%
-          if (hit.originalSeconds && rem/hit.originalSeconds <= 0.1) {
-            const minute = Math.floor(rem/60);
-            if (alarmState.get(hit.assignmentId) !== minute) {
-              alarmState.set(hit.assignmentId, minute);
+    // ⏲ update countdown & alarms
+    setInterval(()=>{
+      if(!currentHits.length) return;
+      for(const h of currentHits){
+        if(!h.assignmentId) continue;
+        const el=document.querySelector(`[data-assign="${h.assignmentId}"]`);
+        if(!el) continue;
+        let rem=h.remainingSeconds??null;
+        if(h.deadline) rem=Math.floor((new Date(h.deadline)-Date.now())/1000);
+        if(rem!=null){
+          el.textContent=fmtClock(rem);
+          if(h.originalSeconds && rem/h.originalSeconds<=0.1){
+            const minute=Math.floor(rem/60);
+            if(alarmState.get(h.assignmentId)!==minute){
+              alarmState.set(h.assignmentId,minute);
               alarm.play().catch(()=>{});
             }
           }
         }
       }
-    }, 1000);
+    },1000);
   </script>
 </body>
 </html>
