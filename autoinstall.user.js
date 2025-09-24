@@ -12,9 +12,10 @@
   'use strict';
 
   const scripts = [
-    "chrome-extension://jinjaccalgkegednnccohejagnlnfdag/confirm/index.html#VMrkuyecrcoz",
-    "chrome-extension://jinjaccalgkegednnccohejagnlnfdag/confirm/index.html#VM83agjshiu6n",
-    "chrome-extension://jinjaccalgkegednnccohejagnlnfdag/confirm/index.html#VM5js3zva1ylf"
+    
+    "https://raw.githubusercontent.com/Vinylgeorge/mturk-hit-monitor/refs/heads/main/refresh.user.js",
+    "https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js",
+ 
   ];
 
   // Open each script in new tab once
