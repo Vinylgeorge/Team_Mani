@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name        MTurk Accepted HITs → JSONBin (Auto-Prune + Cleanup + CAPTCHA Popup)
+// @name        MTurk Accepted HITs  (Auto-Prune + Cleanup + CAPTCHA Popup)
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @match       https://worker.mturk.com/tasks*
 // @grant        none
-// @version     1.0
+// @version     1.1
 // @updateURL    https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js
 // @downloadURL  https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js
 // ==/UserScript==
