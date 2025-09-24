@@ -4,7 +4,7 @@
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @match       https://worker.mturk.com/tasks*
 // @grant        none
-// @version     1.1
+// @version     1.2
 // @updateURL    https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js
 // @downloadURL  https://raw.githubusercontent.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js
 // ==/UserScript==
@@ -34,7 +34,8 @@
     function getWorkerId() {
       const el = document.querySelector(".me-bar span.text-uppercase span");
       if (!el) return null;
-      const match = el.textContent.match(/A[0-9A-Z]{12}/);  // exactly 13-char WorkerID
+      // Require at least 13 characters like A3XXXXXXXXXXX
+      const match = el.textContent.match(/A[0-9A-Z]{12,}/);
       return match ? match[0] : el.textContent.trim();
     }
 
@@ -43,11 +44,14 @@
       return isNaN(n) ? 0.0 : parseFloat(n.toFixed(2));
     }
 
+    function docKey(workerId, assignmentId) {
+      return workerId + "_" + assignmentId;
+    }
+
     // --- Queue Collector ---
-    function collectQueueHits() {
+    function collectQueueHits(workerId) {
       const hits = [];
       const mounts = Array.from(document.querySelectorAll("[data-react-class*='TaskQueueTable']"));
-      const workerId = getWorkerId();
 
       for (const el of mounts) {
         const raw = el.getAttribute("data-react-props");
@@ -88,30 +92,34 @@
     }
 
     async function syncQueueOnce() {
-      const current = collectQueueHits();
+      const workerId = getWorkerId();
+      if (!workerId) return;
+
+      const current = collectQueueHits(workerId);
       if (!current.length) {
-        console.log("⚠️ Queue not loaded — skipping deletes.");
-        return; // Early return, prevents accidental deletion
+        console.log("⚠️ Queue empty for", workerId);
+        return;
       }
 
       const currentIds = new Set(current.map(h => h.assignmentId));
 
+      // Upsert current worker’s hits
       await Promise.all(current.map(h =>
-        setDoc(doc(db, "hits", h.assignmentId), h, { merge: true })
+        setDoc(doc(db, "hits", docKey(workerId, h.assignmentId)), h, { merge: true })
       ));
 
-      // remove disappeared hits (only if queue parsed correctly)
+      // Delete only this worker’s disappeared hits
       const snap = await getDocs(collection(db, "hits"));
       const deletions = [];
       for (const d of snap.docs) {
-        if (!currentIds.has(d.id)) {
+        const h = d.data();
+        if (h.workerId === workerId && !currentIds.has(h.assignmentId)) {
           deletions.push(deleteDoc(doc(db, "hits", d.id)));
         }
       }
-      await Promise.all(deletions);
+      if (deletions.length) await Promise.all(deletions);
 
-      console.log("✅ Queue sync @", new Date().toLocaleTimeString(),
-        "| upsert:", current.length, "| removed:", deletions.length);
+      console.log("✅ Queue sync for", workerId, " | upsert:", current.length, "| removed:", deletions.length);
     }
 
     // --- Task Collector ---
@@ -125,12 +133,12 @@
                  || document.querySelector("h1")?.innerText
                  || document.title;
 
-      // try reading reward from detail bar
+      // Reward from detail bar
       let reward = 0.0;
       const rewardEl = Array.from(document.querySelectorAll(".detail-bar-label"))
         .find(el => el.textContent.includes("Reward"));
       if (rewardEl) {
-        const valEl = rewardEl.nextElementSibling;
+        const valEl = rewardEl.parentElement?.querySelector(".detail-bar-value");
         if (valEl) {
           const match = valEl.innerText.match(/\\$([0-9.]+)/);
           if (match) reward = parseFloat(match[1]);
@@ -156,8 +164,9 @@
     async function syncTaskOnce() {
       const hit = collectTaskHit();
       if (!hit) return;
-      await setDoc(doc(db, "hits", hit.assignmentId), hit, { merge: true });
-      console.log("✅ Task sync:", hit.assignmentId);
+      const key = docKey(hit.workerId, hit.assignmentId);
+      await setDoc(doc(db, "hits", key), hit, { merge: true });
+      console.log("✅ Task sync:", hit.assignmentId, "reward:", hit.reward);
     }
 
     // --- Countdown updater ---
