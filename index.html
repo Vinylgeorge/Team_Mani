@@ -43,8 +43,8 @@
       font-weight: 600;
     }
     tr:hover { background: #f9fcff; }
-    .warn { color: #b45309; }     /* amber */
-    .danger { color: #b91c1c; }   /* red */
+    .warn { color: #b45309; }
+    .danger { color: #b91c1c; }
     .muted { color: #6b7280; }
   </style>
 </head>
@@ -56,7 +56,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // 🔑 Firebase
+    // 🔑 Firebase Config
     const firebaseConfig = {
       apiKey: "enjoymturk2025",
       authDomain: "mturk-monitor-71203.firebaseapp.com",
@@ -68,27 +68,23 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
     const hitsRef = collection(db, "hits");
-
     const tableContainer = document.getElementById("tableContainer");
 
-    // 🔊 Alarm sound (needs user gesture to unlock autoplay on most browsers)
+    // 🔊 Alarm setup
     const alarm = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
     alarm.preload = "auto";
     const unlock = () => {
-      alarm.play().then(() => {
-        alarm.pause(); alarm.currentTime = 0;
-      }).catch(() => {});
+      alarm.play().then(() => { alarm.pause(); alarm.currentTime = 0; }).catch(()=>{});
       document.removeEventListener("click", unlock);
       document.removeEventListener("keydown", unlock);
     };
     document.addEventListener("click", unlock);
     document.addEventListener("keydown", unlock);
 
-    // 🧭 Google Sheet (WorkerID -> User)
+    // 🧭 Load WorkerID → User mapping
     const SHEET_CSV =
       "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
-    const workerToUser = Object.create(null);
-
+    const workerToUser = {};
     async function loadUserMapOnce() {
       try {
         const res = await fetch(SHEET_CSV, { cache: "no-store" });
@@ -98,12 +94,10 @@
         const head = rows[0].map(h => h.trim().toLowerCase());
         const widIdx = head.indexOf("workerid");
         const userIdx = head.indexOf("user");
-        if (widIdx === -1 || userIdx === -1) return;
         for (let i = 1; i < rows.length; i++) {
           const r = rows[i];
           const wid = (r[widIdx] || "").trim();
-          if (!/^[A][A-Z0-9]{12}$/.test(wid)) continue; // A + 12 more = 13 chars total
-          workerToUser[wid] = (r[userIdx] || "").trim();
+          if (/^A[A-Z0-9]{12}$/.test(wid)) workerToUser[wid] = (r[userIdx] || "").trim();
         }
       } catch (e) {
         console.warn("User map load failed:", e);
@@ -111,65 +105,30 @@
     }
     await loadUserMapOnce();
 
-    // 🧮 Utilities
-    function formatReward(value) {
-      const num = Number(value);
-      return isNaN(num) ? "$0.00" : `$${num.toFixed(2)}`;
+    // 🧮 Helpers
+    function formatReward(v) {
+      const n = Number(v);
+      return isNaN(n) ? "$0.00" : `$${n.toFixed(2)}`;
     }
     function fmtClock(sec) {
       if (sec == null || !isFinite(sec)) return "-";
       sec = Math.max(0, Math.floor(sec));
-      const h = Math.floor(sec / 3600);
-      const m = Math.floor((sec % 3600) / 60);
-      const s = sec % 60;
-      return h > 0
-        ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`
-        : `${m}:${String(s).padStart(2,"0")}`;
+      const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+      return h>0 ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`
+                 : `${m}:${String(s).padStart(2,"0")}`;
     }
 
-    // Keep some state for alarms so we ping every minute (not every second)
-    const alarmState = new Map(); // assignmentId -> lastMinuteIntPlayed
+    // ⏱ Alarm state
+    const alarmState = new Map(); // assignmentId -> lastMinute
 
-    // We’ll store current snapshot rows to drive the 1s timer without re-querying Firestore
+    // Cache snapshot
     let currentHits = [];
-
-    function totalSeconds(hit) {
-      // Prefer explicit fields if you later add them; for now derive from deadline/acceptedAt
-      if (hit.acceptedAt && hit.deadline) {
-        const t = (new Date(hit.deadline) - new Date(hit.acceptedAt)) / 1000;
-        if (t > 0) return t;
-      }
-      // fallback: if originalSeconds is present
-      if (typeof hit.originalSeconds === "number" && hit.originalSeconds > 0) return hit.originalSeconds;
-      return null;
-    }
-
-    function remainingSecondsNow(hit) {
-      if (!hit.deadline) return hit.remainingSeconds ?? null;
-      const sec = Math.floor((new Date(hit.deadline) - Date.now()) / 1000);
-      return Math.max(0, sec);
-    }
-
-    function rowIntensity(rem, total) {
-      if (rem == null) return "";
-      if (total == null) {
-        // without total, just show red when under 2 minutes
-        if (rem <= 120) return "danger";
-        if (rem <= 300) return "warn";
-        return "";
-      }
-      const ratio = rem / total;
-      if (ratio <= 0.10) return "danger";
-      if (ratio <= 0.25) return "warn";
-      return "";
-    }
 
     function buildTable(hits) {
       if (!hits.length) {
         tableContainer.innerHTML = "<p>No HITs in queue</p>";
         return;
       }
-
       let html = `
         <table>
           <thead>
@@ -182,3 +141,57 @@
               <th>Time Left</th>
               <th>Accepted At</th>
             </tr>
+          </thead><tbody>`;
+      for (const hit of hits) {
+        const user = workerToUser[hit.workerId] || "-";
+        const rem = hit.remainingSeconds ?? null;
+        const total = hit.originalSeconds ?? null;
+        const ratio = (rem != null && total) ? rem/total : null;
+        const css = ratio != null && ratio <= 0.1 ? "danger" : ratio != null && ratio <= 0.25 ? "warn" : "";
+        html += `
+          <tr>
+            <td>${user}</td>
+            <td>${hit.workerId}</td>
+            <td>${hit.requester || "-"}</td>
+            <td>${hit.title || "-"}</td>
+            <td class="reward">${formatReward(hit.reward)}</td>
+            <td class="timeleft ${css}" data-assign="${hit.assignmentId}">${fmtClock(rem)}</td>
+            <td>${hit.acceptedAt ? new Date(hit.acceptedAt).toLocaleString() : "-"}</td>
+          </tr>`;
+      }
+      html += "</tbody></table>";
+      tableContainer.innerHTML = html;
+    }
+
+    // 🔴 Realtime Firestore subscription
+    onSnapshot(hitsRef, (snap) => {
+      currentHits = [];
+      snap.forEach(d => currentHits.push(d.data()));
+      buildTable(currentHits);
+    });
+
+    // ⏲ Update countdown + alarms every second
+    setInterval(() => {
+      if (!currentHits.length) return;
+      for (const hit of currentHits) {
+        if (!hit.assignmentId) continue;
+        const el = document.querySelector(`[data-assign="${hit.assignmentId}"]`);
+        if (!el) continue;
+        let rem = hit.remainingSeconds ?? null;
+        if (hit.deadline) rem = Math.floor((new Date(hit.deadline) - Date.now())/1000);
+        if (rem != null) {
+          el.textContent = fmtClock(rem);
+          // alarm below 10%
+          if (hit.originalSeconds && rem/hit.originalSeconds <= 0.1) {
+            const minute = Math.floor(rem/60);
+            if (alarmState.get(hit.assignmentId) !== minute) {
+              alarmState.set(hit.assignmentId, minute);
+              alarm.play().catch(()=>{});
+            }
+          }
+        }
+      }
+    }, 1000);
+  </script>
+</body>
+</html>
