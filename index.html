@@ -59,7 +59,7 @@
         const userIdx = head.indexOf("user");
         for (let i=1;i<rows.length;i++) {
           const wid = (rows[i][widIdx]||"").trim();
-          if (/^A[A-Z0-9]{12}$/.test(wid)) workerToUser[wid] = (rows[i][userIdx]||"").trim();
+          if (/^A[A-Z0-9]{12,}$/.test(wid)) workerToUser[wid] = (rows[i][userIdx]||"").trim();
         }
       } catch(e){ console.warn("User map failed", e); }
     }
