@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>MTurk Monitor</title>
+  <title>MTurk Monitor — Firestore</title>
   <style>
     body {
       font-family: Inter, Roboto, Arial, sans-serif;
@@ -19,7 +19,7 @@
       border-collapse: collapse;
       margin-top: 20px;
       background: #fff;
-      border-radius: 6px;
+      border-radius: 8px;
       overflow: hidden;
       box-shadow: 0 1px 4px rgba(0,0,0,0.1);
     }
@@ -47,174 +47,77 @@
   <h1>MTurk Monitor (Realtime)</h1>
   <div id="tableContainer">Loading...</div>
 
- <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-  // Firebase (read-only on index)
-  const firebaseConfig = {
-    apiKey: "enjoymturk2025",
-    authDomain: "mturk-monitor-71203.firebaseapp.com",
-    projectId: "mturk-monitor-71203",
-    storageBucket: "mturk-monitor-71203.firebasestorage.app",
-    messagingSenderId: "149805882414",
-    appId: "1:149805882414:web:ad879531a567e0b1b713bf"
-  };
+    // 🔑 Firebase Config
+    const firebaseConfig = {
+      apiKey: "enjoymturk2025",
+      authDomain: "mturk-monitor-71203.firebaseapp.com",
+      projectId: "mturk-monitor-71203",
+      storageBucket: "mturk-monitor-71203.firebasestorage.app",
+      messagingSenderId: "149805882414",
+      appId: "1:149805882414:web:ad879531a567e0b1b713bf"
+    };
 
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
 
-  const hitsRef = collection(db, "hits");
-  const tableContainer = document.getElementById("tableContainer");
+    const hitsRef = collection(db, "hits");
+    const tableContainer = document.getElementById("tableContainer");
 
-  // ---- User map from Google Sheet (CSV) ----
-  const SHEET_CSV_URL =
-    "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
+    // ✅ Format reward consistently as $X.XX
+    function formatReward(value) {
+      if (value === null || value === undefined) return "$0.00";
+      const num = Number(value);
+      if (isNaN(num)) return "$0.00";
+      return `$${num.toFixed(2)}`;
+    }
 
-  let workerMap = {}; // { workerId: { user, host, username } }
-
-  async function loadWorkerMap() {
-    try {
-      const res = await fetch(SHEET_CSV_URL, { cache: "no-store" });
-      const text = await res.text();
-      const rows = text.split(/\r?\n/).map(r => r.split(","));
-      const header = rows[0].map(h => h.trim().toLowerCase());
-
-      const idIdx = header.indexOf("workerid");
-      const userIdx = header.indexOf("user");
-      const hostIdx = header.indexOf("host");
-      const usernameIdx = header.indexOf("username");
-
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        const wid = (row[idIdx] || "").trim();
-        if (!wid) continue;
-        workerMap[wid] = {
-          user: (row[userIdx] || "-").trim(),
-          host: (row[hostIdx] || "").trim(),
-          username: (row[usernameIdx] || "").trim()
-        };
+    function buildTable(hits) {
+      if (!hits.length) {
+        tableContainer.innerHTML = "<p>No HITs in queue</p>";
+        return;
       }
-      console.log("✅ UserMap loaded", workerMap);
-    } catch (e) {
-      console.warn("UserMap load failed:", e);
-    }
-  }
-  await loadWorkerMap();
 
-  // ---- Sound for 10% alarms (unlock on interaction) ----
-  const alarm = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
-  alarm.preload = "auto";
-  function unlockAudio() {
-    alarm.play().then(() => {
-      alarm.pause();
-      alarm.currentTime = 0;
-    }).catch(()=>{});
-    document.removeEventListener("click", unlockAudio);
-    document.removeEventListener("keydown", unlockAudio);
-  }
-  document.addEventListener("click", unlockAudio);
-  document.addEventListener("keydown", unlockAudio);
-
-  // Track last alarm times so we ping every 60s while ≤10%
-  const lastAlarmAt = new Map(); // assignmentId -> timestamp ms
-
-  function fmtReward(val) {
-    const n = Number(val);
-    return isNaN(n) ? "-" : `$${n.toFixed(2)}`;
-  }
-
-  function fmtTimer(sec){
-    if (sec == null) return "-";
-    sec = Math.max(0, Math.floor(sec));
-    const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
-    return h>0 ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`
-               : `${m}:${String(s).padStart(2,"0")}`;
-  }
-
-  function buildTable(hits) {
-    if (!hits.length) {
-      tableContainer.innerHTML = "<p>No HITs in queue</p>";
-      return;
-    }
-
-    let html = `
-      <table>
-        <thead>
-          <tr>
-            <th>User</th>
-            <th>Worker ID</th>
-            <th>Requester</th>
-            <th>Title</th>
-            <th>Reward</th>
-            <th>Time Left</th>
-            <th>Accepted At</th>
-          </tr>
-        </thead>
-        <tbody>
-    `;
-
-    for (const h of hits) {
-      const info = workerMap[h.workerId] || {};
-      const user = info.user || "-";
-
-      html += `
-        <tr data-id="${h.assignmentId}">
-          <td>${user}</td>
-          <td>${h.workerId || "-"}</td>
-          <td>${h.requester || "-"}</td>
-          <td>${h.title || "-"}</td>
-          <td>${fmtReward(h.reward)}</td>
-          <td class="remaining">${fmtTimer(h.remainingSeconds)}</td>
-          <td>${h.acceptedAt ? new Date(h.acceptedAt).toLocaleString() : "-"}</td>
-        </tr>
+      let html = `
+        <table>
+          <thead>
+            <tr>
+              <th>Requester</th>
+              <th>Title</th>
+              <th>Reward</th>
+              <th>Worker ID</th>
+              <th>Accepted At</th>
+            </tr>
+          </thead>
+          <tbody>
       `;
-    }
 
-    html += "</tbody></table>";
-    tableContainer.innerHTML = html;
-  }
-
-  let latestHits = [];
-
-  // Firestore stream
-  onSnapshot(hitsRef, (snapshot) => {
-    const hits = [];
-    snapshot.forEach(d => hits.push({ id: d.id, ...d.data() }));
-
-    // Sort by remaining time asc
-    hits.sort((a,b) => (a.remainingSeconds??1e12) - (b.remainingSeconds??1e12));
-
-    latestHits = hits;
-    buildTable(hits);
-    checkTenPercentAlarms(); // evaluate alarms right away on updates
-  });
-
-  function checkTenPercentAlarms() {
-    const now = Date.now();
-    for (const h of latestHits) {
-      const rem = h.remainingSeconds ?? null;
-      const orig = h.originalSeconds ?? null;
-      if (rem == null || orig == null || orig <= 0) continue;
-
-      if (rem <= Math.ceil(orig * 0.10) && rem > 0) {
-        const last = lastAlarmAt.get(h.assignmentId) || 0;
-        if (now - last >= 60_000) {
-          // play alarm every minute while ≤10%
-          alarm.currentTime = 0;
-          alarm.play().catch(()=>{});
-          lastAlarmAt.set(h.assignmentId, now);
-        }
-      } else {
-        // reset when back >10% or no timer
-        lastAlarmAt.delete(h.assignmentId);
+      for (const hit of hits) {
+        html += `
+          <tr>
+            <td>${hit.requester || "-"}</td>
+            <td>${hit.title || "-"}</td>
+            <td class="reward">${formatReward(hit.reward)}</td>
+            <td>${hit.workerId || "-"}</td>
+            <td>${hit.acceptedAt ? new Date(hit.acceptedAt).toLocaleString() : "-"}</td>
+          </tr>
+        `;
       }
+
+      html += "</tbody></table>";
+      tableContainer.innerHTML = html;
     }
-  }
 
-  // Also poll every 15s to re-check the 1-min cadence even if no Firestore change
-  setInterval(checkTenPercentAlarms, 15_000);
-</script>
-
+    // 🔴 Realtime Firestore Subscription
+    onSnapshot(hitsRef, (snapshot) => {
+      const hits = [];
+      snapshot.forEach(doc => hits.push(doc.data()));
+      buildTable(hits);
+      console.log("🔄 Firestore update:", hits.length);
+    });
+  </script>
 </body>
 </html>
