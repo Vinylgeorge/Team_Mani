@@ -67,6 +67,33 @@
     const hitsRef = collection(db, "hits");
     const tableContainer = document.getElementById("tableContainer");
 
+    // Google Sheet CSV mapping
+    const SHEET_CSV_URL =
+      "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
+    let workerMap = {};
+
+    async function loadWorkerMap() {
+      try {
+        const res = await fetch(SHEET_CSV_URL);
+        const text = await res.text();
+        const rows = text.split(/\r?\n/).map(r => r.split(",").map(c => c.trim()));
+        const header = rows[0].map(h => h.toLowerCase());
+
+        const idIndex = header.indexOf("workerid");
+        const userIndex = header.indexOf("user");
+
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          if (row[idIndex]) {
+            workerMap[row[idIndex]] = row[userIndex] || "-";
+          }
+        }
+        console.log("✅ Worker map loaded:", workerMap);
+      } catch (err) {
+        console.error("❌ Failed to load worker map:", err);
+      }
+    }
+
     // ✅ Format reward consistently as $X.XX
     function formatReward(value) {
       if (value === null || value === undefined) return "$0.00";
@@ -89,6 +116,7 @@
               <th>Title</th>
               <th>Reward</th>
               <th>Worker ID</th>
+              <th>User</th>
               <th>Accepted At</th>
             </tr>
           </thead>
@@ -96,12 +124,14 @@
       `;
 
       for (const hit of hits) {
+        const user = workerMap[hit.workerId] || "-";
         html += `
           <tr>
             <td>${hit.requester || "-"}</td>
             <td>${hit.title || "-"}</td>
             <td class="reward">${formatReward(hit.reward)}</td>
             <td>${hit.workerId || "-"}</td>
+            <td>${user}</td>
             <td>${hit.acceptedAt ? new Date(hit.acceptedAt).toLocaleString() : "-"}</td>
           </tr>
         `;
@@ -112,6 +142,7 @@
     }
 
     // 🔴 Realtime Firestore Subscription
+    await loadWorkerMap(); // preload map
     onSnapshot(hitsRef, (snapshot) => {
       const hits = [];
       snapshot.forEach(doc => hits.push(doc.data()));
