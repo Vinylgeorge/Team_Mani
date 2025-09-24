@@ -38,9 +38,14 @@
       font-weight: 600;
       color: #047857;
     }
-    tr:hover {
-      background: #f9fcff;
+    td.timeleft {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
     }
+    tr:hover { background: #f9fcff; }
+    .warn { color: #b45309; }     /* amber */
+    .danger { color: #b91c1c; }   /* red */
+    .muted { color: #6b7280; }
   </style>
 </head>
 <body>
@@ -51,7 +56,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // 🔑 Firebase Config
+    // 🔑 Firebase
     const firebaseConfig = {
       apiKey: "enjoymturk2025",
       authDomain: "mturk-monitor-71203.firebaseapp.com",
@@ -60,46 +65,103 @@
       messagingSenderId: "149805882414",
       appId: "1:149805882414:web:ad879531a567e0b1b713bf"
     };
-
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
-
     const hitsRef = collection(db, "hits");
+
     const tableContainer = document.getElementById("tableContainer");
 
-    // Google Sheet CSV mapping
-    const SHEET_CSV_URL =
+    // 🔊 Alarm sound (needs user gesture to unlock autoplay on most browsers)
+    const alarm = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
+    alarm.preload = "auto";
+    const unlock = () => {
+      alarm.play().then(() => {
+        alarm.pause(); alarm.currentTime = 0;
+      }).catch(() => {});
+      document.removeEventListener("click", unlock);
+      document.removeEventListener("keydown", unlock);
+    };
+    document.addEventListener("click", unlock);
+    document.addEventListener("keydown", unlock);
+
+    // 🧭 Google Sheet (WorkerID -> User)
+    const SHEET_CSV =
       "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
-    let workerMap = {};
+    const workerToUser = Object.create(null);
 
-    async function loadWorkerMap() {
+    async function loadUserMapOnce() {
       try {
-        const res = await fetch(SHEET_CSV_URL);
-        const text = await res.text();
-        const rows = text.split(/\r?\n/).map(r => r.split(",").map(c => c.trim()));
-        const header = rows[0].map(h => h.toLowerCase());
-
-        const idIndex = header.indexOf("workerid");
-        const userIndex = header.indexOf("user");
-
+        const res = await fetch(SHEET_CSV, { cache: "no-store" });
+        const csv = await res.text();
+        const rows = csv.split(/\r?\n/).map(r => r.split(","));
+        if (!rows.length) return;
+        const head = rows[0].map(h => h.trim().toLowerCase());
+        const widIdx = head.indexOf("workerid");
+        const userIdx = head.indexOf("user");
+        if (widIdx === -1 || userIdx === -1) return;
         for (let i = 1; i < rows.length; i++) {
-          const row = rows[i];
-          if (row[idIndex]) {
-            workerMap[row[idIndex]] = row[userIndex] || "-";
-          }
+          const r = rows[i];
+          const wid = (r[widIdx] || "").trim();
+          if (!/^[A][A-Z0-9]{12}$/.test(wid)) continue; // A + 12 more = 13 chars total
+          workerToUser[wid] = (r[userIdx] || "").trim();
         }
-        console.log("✅ Worker map loaded:", workerMap);
-      } catch (err) {
-        console.error("❌ Failed to load worker map:", err);
+      } catch (e) {
+        console.warn("User map load failed:", e);
       }
     }
+    await loadUserMapOnce();
 
-    // ✅ Format reward consistently as $X.XX
+    // 🧮 Utilities
     function formatReward(value) {
-      if (value === null || value === undefined) return "$0.00";
       const num = Number(value);
-      if (isNaN(num)) return "$0.00";
-      return `$${num.toFixed(2)}`;
+      return isNaN(num) ? "$0.00" : `$${num.toFixed(2)}`;
+    }
+    function fmtClock(sec) {
+      if (sec == null || !isFinite(sec)) return "-";
+      sec = Math.max(0, Math.floor(sec));
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      return h > 0
+        ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`
+        : `${m}:${String(s).padStart(2,"0")}`;
+    }
+
+    // Keep some state for alarms so we ping every minute (not every second)
+    const alarmState = new Map(); // assignmentId -> lastMinuteIntPlayed
+
+    // We’ll store current snapshot rows to drive the 1s timer without re-querying Firestore
+    let currentHits = [];
+
+    function totalSeconds(hit) {
+      // Prefer explicit fields if you later add them; for now derive from deadline/acceptedAt
+      if (hit.acceptedAt && hit.deadline) {
+        const t = (new Date(hit.deadline) - new Date(hit.acceptedAt)) / 1000;
+        if (t > 0) return t;
+      }
+      // fallback: if originalSeconds is present
+      if (typeof hit.originalSeconds === "number" && hit.originalSeconds > 0) return hit.originalSeconds;
+      return null;
+    }
+
+    function remainingSecondsNow(hit) {
+      if (!hit.deadline) return hit.remainingSeconds ?? null;
+      const sec = Math.floor((new Date(hit.deadline) - Date.now()) / 1000);
+      return Math.max(0, sec);
+    }
+
+    function rowIntensity(rem, total) {
+      if (rem == null) return "";
+      if (total == null) {
+        // without total, just show red when under 2 minutes
+        if (rem <= 120) return "danger";
+        if (rem <= 300) return "warn";
+        return "";
+      }
+      const ratio = rem / total;
+      if (ratio <= 0.10) return "danger";
+      if (ratio <= 0.25) return "warn";
+      return "";
     }
 
     function buildTable(hits) {
@@ -112,43 +174,11 @@
         <table>
           <thead>
             <tr>
+              <th>User</th>
+              <th>Worker ID</th>
               <th>Requester</th>
               <th>Title</th>
               <th>Reward</th>
-              <th>Worker ID</th>
-              <th>User</th>
+              <th>Time Left</th>
               <th>Accepted At</th>
             </tr>
-          </thead>
-          <tbody>
-      `;
-
-      for (const hit of hits) {
-        const user = workerMap[hit.workerId] || "-";
-        html += `
-          <tr>
-            <td>${hit.requester || "-"}</td>
-            <td>${hit.title || "-"}</td>
-            <td class="reward">${formatReward(hit.reward)}</td>
-            <td>${hit.workerId || "-"}</td>
-            <td>${user}</td>
-            <td>${hit.acceptedAt ? new Date(hit.acceptedAt).toLocaleString() : "-"}</td>
-          </tr>
-        `;
-      }
-
-      html += "</tbody></table>";
-      tableContainer.innerHTML = html;
-    }
-
-    // 🔴 Realtime Firestore Subscription
-    await loadWorkerMap(); // preload map
-    onSnapshot(hitsRef, (snapshot) => {
-      const hits = [];
-      snapshot.forEach(doc => hits.push(doc.data()));
-      buildTable(hits);
-      console.log("🔄 Firestore update:", hits.length);
-    });
-  </script>
-</body>
-</html>
