@@ -4,8 +4,8 @@
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       none
 // @version     1.1
-// @updateURL    https://github.com/Vinylgeorge/Team-Tamil/raw/refs/heads/main/Tasks.user.js
-// @downloadURL  https://github.com/Vinylgeorge/Team-Tamil/raw/refs/heads/main/Tasks.user.js
+// @updateURL    https://github.com/Vinylgeorge/Team-Mani/raw/refs/heads/main/Mturk_tasks.user.js
+// @downloadURL  https://github.com/Vinylgeorge/Team-Mani/raw/refs/heads/main/Mturk_tasks.user.js
 // ==/UserScript==
 
 (function () {
@@ -18,20 +18,20 @@
     import { getFirestore, setDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     // --- 🔥 Firebase Config ---
-    const firebaseConfig = {
-  apiKey: "AIzaSyDIo2TPyxFs1BP_AaeQ6mMvqKXgQorQsS0",
-  authDomain: "taskmonitor-7bc94.firebaseapp.com",
-  projectId: "taskmonitor-7bc94",
-  storageBucket: "taskmonitor-7bc94.firebasestorage.app",
-  messagingSenderId: "294318327155",
-  appId: "1:294318327155:web:e0fd12d1afac85f0bbb106"
+   const firebaseConfig = {
+  apiKey: "AIzaSyBkRYurR0cD2VBSNaqT2hyhMu0-AYw6hpw",
+  authDomain: "manitasks-a9cd5.firebaseapp.com",
+  projectId: "manitasks-a9cd5",
+  storageBucket: "manitasks-a9cd5.firebasestorage.app",
+  messagingSenderId: "123098755087",
+  appId: "1:123098755087:web:2f7f8a04aa7ce47695737a"
 };
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
     // --- 📋 Google Sheet User Mapping ---
-    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1ZKvsYmN24OD-WNpQ964_POXWQZ_X_v49aCMs1Hx1pAQ/export?format=csv&gid=0";
+    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
     const workerToUser = {};
 
     async function loadUserMap() {
