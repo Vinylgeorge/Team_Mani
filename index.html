@@ -1,134 +1,178 @@
-<!doctype html>
+
+
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>MTurk Monitor — Firestore</title>
-  <style>
-    body { font-family: Inter, Roboto, Arial, sans-serif; background:#f7f8fa; padding:20px; color:#111827; }
-    h1 { text-align:center; margin-bottom:20px; }
-    table { width:100%; border-collapse:collapse; margin-top:20px; background:#fff;
-            border-radius:8px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.1);}
-    th, td { border:1px solid #e6e9ef; padding:10px; font-size:14px; }
-    th { background:#f1f3f5; text-align:left; font-weight:600; }
-    td.reward { text-align:right; font-weight:600; color:#047857; }
-    td.timeleft { font-variant-numeric:tabular-nums; font-weight:600; }
-    tr:hover { background:#f9fcff; }
-    .warn { color:#b45309; }
-    .danger { color:#b91c1c; }
-  </style>
-</head>
-<body>
-  <h1>MTurk Monitor (Realtime)</h1>
-  <div id="tableContainer">Loading…</div>
+  <span id="onlineCount" style="margin-left:8px;color:#6b7280">0 online</span>
+  <meta charset="UTF-8">
+  <title>🔥 MTurk Accepted HITs – Live</title>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
-    // 🔑 Firebase Config (fixed storageBucket)
+    import {
+      getFirestore, collection, onSnapshot,
+      doc, setDoc, deleteDoc, serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    // --- Firebase Config ---
     const firebaseConfig = {
-      apiKey: "enjoymturk2025",
-      authDomain: "mturk-monitor-71203.firebaseapp.com",
-      projectId: "mturk-monitor-71203",
-      storageBucket: "mturk-monitor-71203.appspot.com",
-      messagingSenderId: "149805882414",
-      appId: "1:149805882414:web:ad879531a567e0b1b713bf"
-    };
+  apiKey: "AIzaSyBkRYurR0cD2VBSNaqT2hyhMu0-AYw6hpw",
+  authDomain: "manitasks-a9cd5.firebaseapp.com",
+  projectId: "manitasks-a9cd5",
+  storageBucket: "manitasks-a9cd5.firebasestorage.app",
+  messagingSenderId: "123098755087",
+  appId: "1:123098755087:web:2f7f8a04aa7ce47695737a"
+};
+
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
+ // ----------------------------
+    // Presence (Firestore-only)
+    // ----------------------------
+    const ROOM = "index";                   // a single room for this page
+    const HEARTBEAT_MS = 60_000;            // write once per minute
+    const STALE_MS     = 90_000;            // consider offline if >90s inactive
 
-    const hitsRef = collection(db, "hits");
-    const tableContainer = document.getElementById("tableContainer");
+    const onlineEl = document.querySelector("#onlineCount");
+    const presenceCol = collection(db, `rooms/${ROOM}/presence`);
+    const sid = (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
+    const meRef = doc(presenceCol, sid);
 
-    // 🔊 Alarm setup
-    const alarm = new Audio("https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3");
-    alarm.preload = "auto";
-    document.addEventListener("click", () => { alarm.play().then(()=>{alarm.pause();alarm.currentTime=0;}); }, {once:true});
-    document.addEventListener("keydown", () => { alarm.play().then(()=>{alarm.pause();alarm.currentTime=0;}); }, {once:true});
+    async function startPresence() {
+      // create / refresh my presence doc
+      setDoc(meRef, { since: serverTimestamp(), lastActive: serverTimestamp() }, { merge: true }).catch(()=>{});
+      // heartbeat
+      const hb = setInterval(() => {
+        setDoc(meRef, { lastActive: serverTimestamp() }, { merge: true }).catch(()=>{});
+      }, HEARTBEAT_MS);
 
-    // 🧭 WorkerID → User map
-    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
-    const workerToUser = {};
-    async function loadUserMapOnce() {
-      try {
-        const res = await fetch(SHEET_CSV, {cache:"no-store"});
-        const csv = await res.text();
-        const rows = csv.split(/\r?\n/).map(r=>r.split(","));
-        const head = rows[0].map(h=>h.trim().toLowerCase());
-        const widIdx = head.indexOf("workerid");
-        const userIdx = head.indexOf("user");
-        for (let i=1;i<rows.length;i++) {
-          const wid = (rows[i][widIdx]||"").trim();
-          if (/^A[A-Z0-9]{12,}$/.test(wid)) workerToUser[wid] = (rows[i][userIdx]||"").trim();
-        }
-      } catch(e){ console.warn("User map failed", e); }
-    }
-
-    // Helpers
-    function formatReward(v){ const n=Number(v); return isNaN(n)?"$0.00":`$${n.toFixed(2)}`; }
-    function fmtClock(sec){ if(sec==null||!isFinite(sec)) return "-"; sec=Math.max(0,Math.floor(sec));
-      const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
-      return h>0?`${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`:`${m}:${String(s).padStart(2,"0")}`;
-    }
-
-    const alarmState = new Map();
-    let currentHits = [];
-
-    function buildTable(hits){
-      if(!hits.length){ tableContainer.innerHTML="<p>No HITs in queue</p>"; return; }
-      let html=`<table><thead><tr>
-        <th>User</th><th>Worker ID</th><th>Requester</th><th>Title</th>
-        <th>Reward</th><th>Time Left</th><th>Accepted At</th>
-      </tr></thead><tbody>`;
-      for(const h of hits){
-        const user=workerToUser[h.workerId]||"-";
-        const rem=h.remainingSeconds??null;
-        const total=h.originalSeconds??null;
-        const ratio=(rem!=null&&total)?rem/total:null;
-        const css=ratio!=null&&ratio<=0.1?"danger":ratio!=null&&ratio<=0.25?"warn":"";
-        html+=`<tr>
-          <td>${user}</td>
-          <td>${h.workerId}</td>
-          <td>${h.requester||"-"}</td>
-          <td>${h.title||"-"}</td>
-          <td class="reward">${formatReward(h.reward)}</td>
-          <td class="timeleft ${css}" data-assign="${h.assignmentId}">${fmtClock(rem)}</td>
-          <td>${h.acceptedAt?new Date(h.acceptedAt).toLocaleString():"-"}</td>
-        </tr>`;
-      }
-      html+="</tbody></table>";
-      tableContainer.innerHTML=html;
-    }
-
-    // 🔴 Firestore subscription
-    loadUserMapOnce().then(()=>{
-      onSnapshot(hitsRef,(snap)=>{
-        currentHits=[]; snap.forEach(d=>currentHits.push(d.data()));
-        buildTable(currentHits);
+      // clean up on unload (best effort)
+      window.addEventListener("beforeunload", () => {
+        clearInterval(hb);
+        deleteDoc(meRef).catch(()=>{});
       });
-    });
 
-    // ⏲ update countdown & alarms
-    setInterval(()=>{
-      if(!currentHits.length) return;
-      for(const h of currentHits){
-        if(!h.assignmentId) continue;
-        const el=document.querySelector(`[data-assign="${h.assignmentId}"]`);
-        if(!el) continue;
-        let rem=h.remainingSeconds??null;
-        if(h.deadline) rem=Math.floor((new Date(h.deadline)-Date.now())/1000);
-        if(rem!=null){
-          el.textContent=fmtClock(rem);
-          if(h.originalSeconds && rem/h.originalSeconds<=0.1){
-            const minute=Math.floor(rem/60);
-            if(alarmState.get(h.assignmentId)!==minute){
-              alarmState.set(h.assignmentId,minute);
-              alarm.play().catch(()=>{});
-            }
-          }
-        }
+      // live count of viewers active in last 90s
+      onSnapshot(presenceCol, (snap) => {
+        const now = Date.now();
+        let count = 0;
+        snap.forEach(d => {
+          const t = d.data()?.lastActive;
+          const ms = t?.toMillis?.() ?? (t ? Date.parse(t) : 0);
+          if (ms && (now - ms) <= STALE_MS) count++;
+        });
+        if (onlineEl) onlineEl.textContent = `${count} online`;
+      });
+    }
+    startPresence();
+
+    const tableBody = document.querySelector("#hits-body");
+    const soundUrl = "https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3";
+    let knownIds = new Set();
+
+    function playSound() {
+      const audio = new Audio(soundUrl);
+      audio.volume = 0.7;
+      audio.play().catch(e => console.warn("⚠️ Autoplay blocked:", e));
+    }
+
+    function renderTable(hits) {
+      tableBody.innerHTML = "";
+      hits.sort((a, b) => new Date(b.acceptedAt) - new Date(a.acceptedAt));
+      for (const h of hits) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${h.user || "-"}</td>
+          <td>${h.workerId || "-"}</td>
+          <td>${h.requester || "-"}</td>
+          <td>${h.title || "-"}</td>
+          <td>${h.reward || 0}</td>
+          <td>${h.acceptedAt ? new Date(h.acceptedAt).toLocaleString() : "-"}</td>
+        `;
+        tableBody.appendChild(tr);
       }
-    },1000);
+    }
+
+    // --- Real-time Firestore updates ---
+    onSnapshot(collection(db, "hits"), (snapshot) => {
+      const hits = [];
+      const newIds = new Set();
+
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        hits.push(data);
+        newIds.add(data.assignmentId);
+      });
+
+      // detect new additions
+      if (knownIds.size > 0) {
+        const added = Array.from(newIds).filter(id => !knownIds.has(id));
+        if (added.length > 0) playSound();
+      }
+
+      knownIds = newIds;
+      renderTable(hits);
+      console.log("✅ Live update:", hits.length, "active HIT(s)");
+    });
   </script>
+
+  <style>
+    body {
+      font-family: "Segoe UI", Roboto, sans-serif;
+      background: #f8fafc;
+      color: #111827;
+      padding: 24px;
+    }
+    h1 {
+      text-align: center;
+      color: #0f62fe;
+      margin-bottom: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+    }
+    th {
+      background: #0f62fe;
+      color: white;
+      font-weight: 600;
+    }
+    tr:hover {
+      background: #f1f5f9;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 12px;
+      color: #6b7280;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔥 MTurk Accepted HITs (Live Monitor)</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>User</th>
+        <th>Worker ID</th>
+        <th>Requester</th>
+        <th>Title</th>
+        <th>Reward ($)</th>
+        <th>Accepted At</th>
+      </tr>
+    </thead>
+    <tbody id="hits-body"></tbody>
+  </table>
+  <div class="footer">
+    Real-time updates • Plays sound when new HIT arrives
+  </div>
 </body>
 </html>
