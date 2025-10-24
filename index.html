@@ -85,11 +85,11 @@
   </div>
 
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import {
-      getFirestore, collection, onSnapshot, query, orderBy, limit,
-      doc, setDoc, deleteDoc, serverTimestamp
-    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import {
+    getFirestore, collection, onSnapshot, query, orderBy, limit,
+    doc, setDoc, deleteDoc, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     // --- Firebase Config ---
     const firebaseConfig = {
@@ -215,17 +215,17 @@
 
       renderTable(hits);
 
-      if (newHit) {
-        playSound();
-        if (Notification.permission === "granted" && hits[0]) {
-          const h = hits[0];
-          new Notification("New HIT Accepted!", {
-            body: `${h.title || "Untitled"}\nReward: $${h.reward || 0} • ${h.user || h.workerId || ""}`;
-            icon: "https://worker.mturk.com/favicon.ico"
-          });
-        }
+      if (newHit && hits[0]) {
+      playSound();
+      const h = hits[0];
+      if (Notification.permission === "granted") {
+        new Notification("New HIT Accepted!", {
+          body: `${h.user || "Unknown User"} – ${h.title || "Untitled"} • $${h.reward || 0}`,
+          icon: "https://worker.mturk.com/favicon.ico"
+        });
       }
-    });
+    }
+  });
   </script>
 </body>
 </html>
