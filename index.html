@@ -3,7 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <title>🔥 MTurk Accepted HITs – Live</title>
-
   <style>
     body {
       font-family: "Segoe UI", Roboto, sans-serif;
@@ -88,7 +87,7 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import {
-      getFirestore, collection, onSnapshot,
+      getFirestore, collection, onSnapshot, query, orderBy, limit,
       doc, setDoc, deleteDoc, serverTimestamp
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
@@ -117,16 +116,18 @@
     const meRef = doc(presenceCol, sid);
 
     async function startPresence() {
+      // Register self
       setDoc(meRef, { since: serverTimestamp(), lastActive: serverTimestamp() }, { merge: true }).catch(()=>{});
+      // Heartbeat
       const hb = setInterval(() => {
         setDoc(meRef, { lastActive: serverTimestamp() }, { merge: true }).catch(()=>{});
       }, HEARTBEAT_MS);
-
+      // Cleanup
       window.addEventListener("beforeunload", () => {
         clearInterval(hb);
         deleteDoc(meRef).catch(()=>{});
       });
-
+      // Live count
       onSnapshot(presenceCol, (snap) => {
         const now = Date.now();
         let count = 0;
@@ -185,3 +186,46 @@
 
     notifBtn.addEventListener("click", async () => {
       if (!("Notification" in window)) return;
+      const permission = await Notification.requestPermission();
+      updateNotifButton();
+      if (permission === "granted") {
+        new Notification("Notifications enabled!", { body: "You'll be notified for new HITs." });
+      }
+    });
+
+    updateNotifButton();
+
+    // ----------------------------
+    // 🧩 Real-time HITs listener
+    // ----------------------------
+    const hitsCol = collection(db, "hits"); // 👈 Make sure your writer uses same path
+    const q = query(hitsCol, orderBy("acceptedAt", "desc"), limit(100));
+
+    onSnapshot(q, (snap) => {
+      const hits = [];
+      let newHit = false;
+      snap.forEach(doc => {
+        const data = doc.data();
+        hits.push(data);
+        if (!knownIds.has(doc.id)) {
+          knownIds.add(doc.id);
+          newHit = true;
+        }
+      });
+
+      renderTable(hits);
+
+      if (newHit) {
+        playSound();
+        if (Notification.permission === "granted" && hits[0]) {
+          const h = hits[0];
+          new Notification("New HIT Accepted!", {
+            body: `${h.title || "Untitled"} • ${h.reward || 0}$`,
+            icon: "https://worker.mturk.com/favicon.ico"
+          });
+        }
+      }
+    });
+  </script>
+</body>
+</html>
