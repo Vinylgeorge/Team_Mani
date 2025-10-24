@@ -220,7 +220,7 @@
         if (Notification.permission === "granted" && hits[0]) {
           const h = hits[0];
           new Notification("New HIT Accepted!", {
-            body: `${h.title || "Untitled"} • ${h.reward || 0}$`,
+            body: `${h.title || "Untitled"}\nReward: $${h.reward || 0} • ${h.user || h.workerId || ""}`;
             icon: "https://worker.mturk.com/favicon.ico"
           });
         }
