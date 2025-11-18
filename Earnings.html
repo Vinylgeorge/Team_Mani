@@ -56,7 +56,7 @@ function isDailySyncNeeded() {
    LOAD CSV USER LIST
 ====================================================== */
 async function loadCSV() {
-  const res = await fetch("https://docs.google.com/spreadsheets/d/1W0fYDHy8nePZ-rkqZAX2DVOEufSHe7UJfB7OeC49b1o/export?format=csv&gid=0");
+  const res = await fetch("https://docs.google.com/spreadsheets/d/1mf2-AQ59CuboAWz8Fle3qXTFfAI3cnB7mrkqQF1lyCw/export?format=csv&gid=0");
   const text = await res.text();
   const lines = text.split("\n").filter(Boolean);
   const header = lines[0].split(",").map(h => h.trim().toLowerCase());
