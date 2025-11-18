@@ -93,6 +93,8 @@ function loadFromCache() {
   const raw = localStorage.getItem(CACHE_KEY);
   return raw ? JSON.parse(raw) : null;
 }
+console.log("DEBUG: Starting buildTable()");
+console.log("DEBUG: Firestore DB =", earningsDB);
 
 /* ======================================================
    MAIN PROCESSING (READ ONLY)
