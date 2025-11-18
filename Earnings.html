@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>💰 MTurk Earnings Monitor (Daily Sync)</title>
+
+<script type="module">
+/* ======================================================
+   IMPORT FIREBASE
+====================================================== */
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {
+  getFirestore, collection, getDocs, doc, setDoc
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+/* ======================================================
+   FIREBASE CONFIG (EARNINGS DATABASE)
+====================================================== */
+const earningsConfig = {
+  apiKey: "AIzaSyBTFpM3fs7kWBrZL4yOi9tquUTp1HhH7L8",
+  authDomain: "mturk-monitordeep.firebaseapp.com",
+  projectId: "mturk-monitordeep",
+  storageBucket: "mturk-monitordeep.firebasestorage.app",
+  messagingSenderId: "505786000194",
+  appId: "1:505786000194:web:40b9c9df75d3125f3a99cd"
+};
+
+const earningsApp = initializeApp(earningsConfig, "earningsApp");
+const earningsDB  = getFirestore(earningsApp);
+
+/* ======================================================
+   UI ELEMENTS
+====================================================== */
+const totalEl = document.querySelector("#total");
+const tbody = document.querySelector("#data-body");
+const loadingEl = document.querySelector("#loading");
+
+/* ======================================================
+   DAILY SYNC CHECK
+====================================================== */
+const CACHE_KEY = "earnings_cache";
+const SYNC_KEY  = "earnings_last_sync";
+
+function isDailySyncNeeded() {
+  const lastSync = localStorage.getItem(SYNC_KEY);
+  if (!lastSync) return true;
+
+  const last = new Date(lastSync);
+  const now = new Date();
+
+  // more than 24 hours?
+  return (now - last) > (24 * 60 * 60 * 1000);
+}
+
+/* ======================================================
+   LOAD CSV USER LIST
+====================================================== */
+async function loadCSV() {
+  const res = await fetch("https://docs.google.com/spreadsheets/d/1mf2-AQ59CuboAWz8Fle3qXTFfAI3cnB7mrkqQF1lyCw/export?format=csv&gid=0");
+  const text = await res.text();
+  const lines = text.split("\n").filter(Boolean);
+  const header = lines[0].split(",").map(h => h.trim().toLowerCase());
+
+  const users = new Set(), workers = new Set();
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    const u = cols[0]?.trim();
+    const w = cols[1]?.trim();
+    if (u) users.add(u);
+    if (w) workers.add(w);
+  }
+
+  return { users, workers };
+}
+
+/* ======================================================
+   FIRESTORE DAILY SYNC
+====================================================== */
+async function fetchEarningsFromFirestore() {
+  console.log("Fetching from Firestore (daily sync)…");
+
+  const snap = await getDocs(collection(earningsDB, "earnings_logs"));
+  const data = [];
+
+  snap.forEach(docSnap => {
+    data.push({ id: docSnap.id, ...docSnap.data() });
+  });
+
+  // Store in cache
+  localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+  localStorage.setItem(SYNC_KEY, new Date().toISOString());
+
+  return data;
+}
+
+function loadFromCache() {
+  const raw = localStorage.getItem(CACHE_KEY);
+  if (!raw) return null;
+  return JSON.parse(raw);
+}
+
+/* ======================================================
+   PROCESS & DISPLAY DATA
+====================================================== */
+async function processAndDisplay() {
+  loadingEl.style.display = "block";
+
+  const { users, workers } = await loadCSV();
+
+  let earningsData = null;
+
+  if (isDailySyncNeeded()) {
+    earningsData = await fetchEarningsFromFirestore();
+  } else {
+    earningsData = loadFromCache();
+    console.log("Loaded from cache");
+  }
+
+  tbody.innerHTML = "";
+  let total = 0;
+
+  const qualifying = [];
+
+  for (const d of earningsData) {
+    const user = (d.user || "").trim();
+    const wid  = (d.workerId || "").trim();
+    const current = parseFloat(d.currentEarnings) || 0;
+    const nextDate = d.nextTransferDate || "—";
+
+    const lastKnown = parseFloat(d.lastKnownEarnings) || 0;
+
+    let status = "Not Yet";
+    let displayAmount = current;
+    let displayDate = nextDate;
+
+    // transfer detected (current dropped)
+    if (current < lastKnown) {
+      status = "Transferred";
+      displayAmount = lastKnown;
+      displayDate = nextDate;
+    }
+
+    // qualify ≥ $8 and exists in CSV
+    if ((users.has(user) || workers.has(wid)) && displayAmount >= 8) {
+      total += displayAmount;
+      qualifying.push({ user, wid, displayAmount, displayDate, status });
+    }
+  }
+
+  // transferred on top
+  qualifying.sort((a, b) => {
+    if (a.status === "Transferred" && b.status !== "Transferred") return -1;
+    if (b.status === "Transferred" && a.status !== "Transferred") return 1;
+    return 0;
+  });
+
+  // render
+  for (const q of qualifying) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${q.user}</td>
+      <td>${q.wid}</td>
+      <td style="color:#15803d;font-weight:bold">${q.displayAmount.toFixed(2)}</td>
+      <td>${q.displayDate}</td>
+      <td style="font-weight:bold;color:${q.status === "Transferred" ? "#b91c1c" : "#065f46"}">${q.status}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  totalEl.innerHTML =
+    `Total Earnings (≥ $8 Users): $${total.toFixed(2)} (${qualifying.length} qualified)`;
+
+  loadingEl.style.display = "none";
+}
+
+/* START */
+processAndDisplay();
+
+</script>
+
+<style>
+body {
+  font-family: "Segoe UI", Arial;
+  background: #f8fafc;
+  padding: 20px;
+}
+
+h1 {
+  text-align: center;
+  color: #0f62fe;
+}
+
+table {
+  width: 95%;
+  margin: 20px auto;
+  border-collapse: collapse;
+  background: white;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  border-radius: 8px;
+}
+
+th,td {
+  padding: 10px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+th {
+  background: #0f62fe;
+  color: white;
+}
+
+#total {
+  text-align: center;
+  font-size: 18px;
+  font-weight: bold;
+  margin-top: 10px;
+}
+
+#loading {
+  text-align: center;
+  margin-top: 10px;
+  font-size: 15px;
+  color: #6b7280;
+}
+</style>
+
+</head>
+<body>
+
+<h1>💰 MTurk Earnings Monitor</h1>
+
+<div id="loading">Loading data…</div>
+<div id="total"></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>User</th>
+      <th>Worker ID</th>
+      <th>Current Earnings</th>
+      <th>Next Transfer Date</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody id="data-body"></tbody>
+</table>
+
+</body>
+</html>
