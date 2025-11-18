@@ -30,12 +30,12 @@ const earningsDB  = getFirestore(earningsApp);
 /* ======================================================
    ELEMENTS
 ====================================================== */
+const loadingEl = document.getElementById("loading");
 const totalEl   = document.getElementById("total");
 const tbody     = document.getElementById("data-body");
-const loadingEl = document.getElementById("loading");
 
 /* ======================================================
-   CACHE KEYS
+   DAILY SYNC CACHE
 ====================================================== */
 const CACHE_KEY = "earnings_cache_data";
 const SYNC_KEY  = "earnings_last_sync_time";
@@ -47,7 +47,7 @@ function needsSync() {
   const lastDate = new Date(last);
   const now = new Date();
 
-  return (now - lastDate) > (24 * 60 * 60 * 1000); // 24 hours
+  return (now - lastDate) > (24 * 60 * 60 * 1000); // 24 hr
 }
 
 /* ======================================================
@@ -55,19 +55,18 @@ function needsSync() {
 ====================================================== */
 async function loadCSV() {
   const res = await fetch(
-    "https://docs.google.com/spreadsheets/d/1mf2-AQ59CuboAWz8Fle3qXTFfAI3cnB7mrkqQF1lyCw/export?format=csv&gid=0"
+   "https://docs.google.com/spreadsheets/d/1mf2-AQ59CuboAWz8Fle3qXTFfAI3cnB7mrkqQF1lyCw/export?format=csv&gid=0"
   );
-
   const text = await res.text();
-  const lines = text.split("\n").filter(Boolean);
 
+  const lines = text.split("\n").filter(Boolean);
   const users = new Set();
   const workers = new Set();
 
   for (let i = 1; i < lines.length; i++) {
-    const [user, wid] = lines[i].split(",");
-    if (user) users.add(user.trim());
-    if (wid)  workers.add(wid.trim());
+    const [u, w] = lines[i].split(",");
+    if (u) users.add(u.trim());
+    if (w) workers.add(w.trim());
   }
 
   return { users, workers };
@@ -77,36 +76,17 @@ async function loadCSV() {
    FIRESTORE DAILY FETCH (READ ONLY)
 ====================================================== */
 async function fetchFromFirestore() {
-  console.log("Fetching from Firestore (daily)…");
+  console.log("🔥 Reading earnings_logs from Firestore (daily)…");
 
- console.log("🔥 DEBUG: Fetching earnings_logs…");
+  const snap = await getDocs(collection(earningsDB, "earnings_logs"));
+  const arr = [];
 
-let snap;
-try {
-  snap = await getDocs(collection(earningsDB, "earnings_logs"));
-} catch (err) {
-  console.error("❌ FIRESTORE ERROR:", err);
-  alert("Firestore READ ERROR. Check rules & domain.");
-  return [];
-}
+  snap.forEach(doc => arr.push({ id: doc.id, ...doc.data() }));
 
-console.log("🔥 DEBUG: Snapshot size =", snap.size);
-
-const data = [];
-snap.forEach(d => {
-  console.log("📄 DOC:", d.id, d.data());
-  data.push({ id: d.id, ...d.data() });
-});
-
-if (data.length === 0) {
-  console.warn("⚠️ No documents returned!");
-}
-
-
-  localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+  localStorage.setItem(CACHE_KEY, JSON.stringify(arr));
   localStorage.setItem(SYNC_KEY, new Date().toISOString());
 
-  return data;
+  return arr;
 }
 
 function loadFromCache() {
@@ -115,91 +95,94 @@ function loadFromCache() {
 }
 
 /* ======================================================
-   PROCESS AND DISPLAY (READ ONLY)
+   MAIN PROCESSING (READ ONLY)
 ====================================================== */
 async function buildTable() {
   loadingEl.style.display = "block";
 
   const { users, workers } = await loadCSV();
-
   let earningsData = null;
 
   if (needsSync()) {
     earningsData = await fetchFromFirestore();
   } else {
     earningsData = loadFromCache();
-    console.log("Loaded from local cache");
+    console.log("📦 Loaded earnings from local cache");
   }
 
   tbody.innerHTML = "";
   let total = 0;
-
-  const qualifying = [];
+  let qualifying = [];
 
   for (const d of earningsData) {
     const user = (d.user || "").trim();
     const wid  = (d.workerId || "").trim();
 
-    const current = parseFloat(d.currentEarnings) || 0;
-    const nextDate = d.nextTransferDate || "—";
+    const current  = parseFloat(d.currentEarnings) || 0;
+    const transfer = parseFloat(d.lastTransferAmount) || 0;
+    const month    = parseFloat(d.lastMonthEarnings) || 0;
 
-    const lastKnown = parseFloat(d.lastKnownEarnings) || 0;
+    // Best available earnings
+    let amount =
+      current > 0 ? current :
+      transfer > 0 ? transfer :
+      month > 0 ? month : 0;
 
+    if (amount === 0) continue;
+
+    const nextDate = d.nextTransferDate || d.lastTransferDate || "—";
+
+    // Transfer logic based on your Firestore fields
     let status = "Not Yet";
-    let displayAmount = current;
-    let displayDate = nextDate;
-
-    // Transfer detection based only on FIRESTORE DATA
-    if (current < lastKnown) {
+    if (transfer > current && transfer >= 8) {
       status = "Transferred";
-      displayAmount = lastKnown;
-      displayDate = nextDate;
+      amount = transfer;
     }
 
-    // Only show users in CSV AND >= $8
-    if ((users.has(user) || workers.has(wid)) && displayAmount >= 8) {
-      total += displayAmount;
-
+    // Must be in CSV & ≥$8
+    if ((users.has(user) || workers.has(wid)) && amount >= 8) {
+      total += amount;
       qualifying.push({
         user,
         wid,
-        displayAmount,
-        displayDate,
+        amount,
+        nextDate,
         status
       });
     }
   }
 
-  // sort transferred → top
-  qualifying.sort((a, b) => {
-    if (a.status === "Transferred" && b.status !== "Transferred") return -1;
-    if (b.status === "Transferred" && a.status !== "Transferred") return 1;
+  // Transferred → top
+  qualifying.sort((a,b)=>{
+    if (a.status==="Transferred" && b.status!=="Transferred") return -1;
+    if (b.status==="Transferred" && a.status!=="Transferred") return 1;
     return 0;
   });
 
-  // render table
+  totalEl.innerHTML =
+    `Total Earnings (≥ $8 Users): <b>$${total.toFixed(2)}</b> (${qualifying.length} qualified)`;
+
+  tbody.innerHTML = "";
+
   for (const q of qualifying) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${q.user}</td>
       <td>${q.wid}</td>
-      <td style="color:#15803d;font-weight:bold">${q.displayAmount.toFixed(2)}</td>
-      <td>${q.displayDate}</td>
-      <td style="font-weight:bold;color:${q.status === "Transferred" ? "#b91c1c" : "#065f46"}">${q.status}</td>
+      <td style="color:#15803d;font-weight:bold">${q.amount.toFixed(2)}</td>
+      <td>${q.nextDate}</td>
+      <td style="font-weight:bold;color:${q.status==="Transferred" ? "#b91c1c" : "#065f46"}">${q.status}</td>
     `;
     tbody.appendChild(tr);
   }
-
-  totalEl.innerHTML =
-    `Total Earnings (≥ $8 Users): $${total.toFixed(2)} (${qualifying.length} qualified)`;
 
   loadingEl.style.display = "none";
 }
 
 /* START */
 buildTable();
-</script>
 
+</script>
 
 <style>
 body {
@@ -216,8 +199,8 @@ h1 {
 #loading {
   text-align: center;
   margin-top: 10px;
-  font-size: 15px;
   color: #6b7280;
+  font-size: 15px;
 }
 
 #total {
