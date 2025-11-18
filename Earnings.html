@@ -79,10 +79,29 @@ async function loadCSV() {
 async function fetchFromFirestore() {
   console.log("Fetching from Firestore (daily)…");
 
-  const snap = await getDocs(collection(earningsDB, "earnings_logs"));
-  const data = [];
+ console.log("🔥 DEBUG: Fetching earnings_logs…");
 
-  snap.forEach(d => data.push({ id: d.id, ...d.data() }));
+let snap;
+try {
+  snap = await getDocs(collection(earningsDB, "earnings_logs"));
+} catch (err) {
+  console.error("❌ FIRESTORE ERROR:", err);
+  alert("Firestore READ ERROR. Check rules & domain.");
+  return [];
+}
+
+console.log("🔥 DEBUG: Snapshot size =", snap.size);
+
+const data = [];
+snap.forEach(d => {
+  console.log("📄 DOC:", d.id, d.data());
+  data.push({ id: d.id, ...d.data() });
+});
+
+if (data.length === 0) {
+  console.warn("⚠️ No documents returned!");
+}
+
 
   localStorage.setItem(CACHE_KEY, JSON.stringify(data));
   localStorage.setItem(SYNC_KEY, new Date().toISOString());
