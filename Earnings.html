@@ -2,16 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>💰 MTurk Earnings Monitor (Daily Sync)</title>
+<title>💰 MTurk Earnings Monitor (Daily Read-Only)</title>
 
 <script type="module">
 /* ======================================================
    IMPORT FIREBASE
 ====================================================== */
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import {
-  getFirestore, collection, getDocs, doc, setDoc
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, getDocs } from 
+"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 /* ======================================================
    FIREBASE CONFIG (EARNINGS DATABASE)
@@ -29,65 +28,62 @@ const earningsApp = initializeApp(earningsConfig, "earningsApp");
 const earningsDB  = getFirestore(earningsApp);
 
 /* ======================================================
-   UI ELEMENTS
+   ELEMENTS
 ====================================================== */
-const totalEl = document.querySelector("#total");
-const tbody = document.querySelector("#data-body");
-const loadingEl = document.querySelector("#loading");
+const totalEl   = document.getElementById("total");
+const tbody     = document.getElementById("data-body");
+const loadingEl = document.getElementById("loading");
 
 /* ======================================================
-   DAILY SYNC CHECK
+   CACHE KEYS
 ====================================================== */
-const CACHE_KEY = "earnings_cache";
-const SYNC_KEY  = "earnings_last_sync";
+const CACHE_KEY = "earnings_cache_data";
+const SYNC_KEY  = "earnings_last_sync_time";
 
-function isDailySyncNeeded() {
-  const lastSync = localStorage.getItem(SYNC_KEY);
-  if (!lastSync) return true;
+function needsSync() {
+  const last = localStorage.getItem(SYNC_KEY);
+  if (!last) return true;
 
-  const last = new Date(lastSync);
+  const lastDate = new Date(last);
   const now = new Date();
 
-  // more than 24 hours?
-  return (now - last) > (24 * 60 * 60 * 1000);
+  return (now - lastDate) > (24 * 60 * 60 * 1000); // 24 hours
 }
 
 /* ======================================================
    LOAD CSV USER LIST
 ====================================================== */
 async function loadCSV() {
-  const res = await fetch("https://docs.google.com/spreadsheets/d/1mf2-AQ59CuboAWz8Fle3qXTFfAI3cnB7mrkqQF1lyCw/export?format=csv&gid=0");
+  const res = await fetch(
+    "https://docs.google.com/spreadsheets/d/1mf2-AQ59CuboAWz8Fle3qXTFfAI3cnB7mrkqQF1lyCw/export?format=csv&gid=0"
+  );
+
   const text = await res.text();
   const lines = text.split("\n").filter(Boolean);
-  const header = lines[0].split(",").map(h => h.trim().toLowerCase());
 
-  const users = new Set(), workers = new Set();
+  const users = new Set();
+  const workers = new Set();
 
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",");
-    const u = cols[0]?.trim();
-    const w = cols[1]?.trim();
-    if (u) users.add(u);
-    if (w) workers.add(w);
+    const [user, wid] = lines[i].split(",");
+    if (user) users.add(user.trim());
+    if (wid)  workers.add(wid.trim());
   }
 
   return { users, workers };
 }
 
 /* ======================================================
-   FIRESTORE DAILY SYNC
+   FIRESTORE DAILY FETCH (READ ONLY)
 ====================================================== */
-async function fetchEarningsFromFirestore() {
-  console.log("Fetching from Firestore (daily sync)…");
+async function fetchFromFirestore() {
+  console.log("Fetching from Firestore (daily)…");
 
   const snap = await getDocs(collection(earningsDB, "earnings_logs"));
   const data = [];
 
-  snap.forEach(docSnap => {
-    data.push({ id: docSnap.id, ...docSnap.data() });
-  });
+  snap.forEach(d => data.push({ id: d.id, ...d.data() }));
 
-  // Store in cache
   localStorage.setItem(CACHE_KEY, JSON.stringify(data));
   localStorage.setItem(SYNC_KEY, new Date().toISOString());
 
@@ -96,25 +92,24 @@ async function fetchEarningsFromFirestore() {
 
 function loadFromCache() {
   const raw = localStorage.getItem(CACHE_KEY);
-  if (!raw) return null;
-  return JSON.parse(raw);
+  return raw ? JSON.parse(raw) : null;
 }
 
 /* ======================================================
-   PROCESS & DISPLAY DATA
+   PROCESS AND DISPLAY (READ ONLY)
 ====================================================== */
-async function processAndDisplay() {
+async function buildTable() {
   loadingEl.style.display = "block";
 
   const { users, workers } = await loadCSV();
 
   let earningsData = null;
 
-  if (isDailySyncNeeded()) {
-    earningsData = await fetchEarningsFromFirestore();
+  if (needsSync()) {
+    earningsData = await fetchFromFirestore();
   } else {
     earningsData = loadFromCache();
-    console.log("Loaded from cache");
+    console.log("Loaded from local cache");
   }
 
   tbody.innerHTML = "";
@@ -125,6 +120,7 @@ async function processAndDisplay() {
   for (const d of earningsData) {
     const user = (d.user || "").trim();
     const wid  = (d.workerId || "").trim();
+
     const current = parseFloat(d.currentEarnings) || 0;
     const nextDate = d.nextTransferDate || "—";
 
@@ -134,28 +130,35 @@ async function processAndDisplay() {
     let displayAmount = current;
     let displayDate = nextDate;
 
-    // transfer detected (current dropped)
+    // Transfer detection based only on FIRESTORE DATA
     if (current < lastKnown) {
       status = "Transferred";
       displayAmount = lastKnown;
       displayDate = nextDate;
     }
 
-    // qualify ≥ $8 and exists in CSV
+    // Only show users in CSV AND >= $8
     if ((users.has(user) || workers.has(wid)) && displayAmount >= 8) {
       total += displayAmount;
-      qualifying.push({ user, wid, displayAmount, displayDate, status });
+
+      qualifying.push({
+        user,
+        wid,
+        displayAmount,
+        displayDate,
+        status
+      });
     }
   }
 
-  // transferred on top
+  // sort transferred → top
   qualifying.sort((a, b) => {
     if (a.status === "Transferred" && b.status !== "Transferred") return -1;
     if (b.status === "Transferred" && a.status !== "Transferred") return 1;
     return 0;
   });
 
-  // render
+  // render table
   for (const q of qualifying) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -175,9 +178,9 @@ async function processAndDisplay() {
 }
 
 /* START */
-processAndDisplay();
-
+buildTable();
 </script>
+
 
 <style>
 body {
@@ -191,16 +194,30 @@ h1 {
   color: #0f62fe;
 }
 
-table {
-  width: 95%;
-  margin: 20px auto;
-  border-collapse: collapse;
-  background: white;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-  border-radius: 8px;
+#loading {
+  text-align: center;
+  margin-top: 10px;
+  font-size: 15px;
+  color: #6b7280;
 }
 
-th,td {
+#total {
+  text-align: center;
+  font-size: 18px;
+  font-weight: bold;
+  margin-top: 15px;
+}
+
+table {
+  width: 95%;
+  margin: 15px auto;
+  background: white;
+  border-radius: 8px;
+  border-collapse: collapse;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+
+th, td {
   padding: 10px;
   border-bottom: 1px solid #e5e7eb;
 }
@@ -209,28 +226,14 @@ th {
   background: #0f62fe;
   color: white;
 }
-
-#total {
-  text-align: center;
-  font-size: 18px;
-  font-weight: bold;
-  margin-top: 10px;
-}
-
-#loading {
-  text-align: center;
-  margin-top: 10px;
-  font-size: 15px;
-  color: #6b7280;
-}
 </style>
 
 </head>
 <body>
 
-<h1>💰 MTurk Earnings Monitor</h1>
+<h1>💰 Daily MTurk Earnings Monitor</h1>
 
-<div id="loading">Loading data…</div>
+<div id="loading">Loading Earnings…</div>
 <div id="total"></div>
 
 <table>
