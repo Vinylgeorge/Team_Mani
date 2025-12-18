@@ -58,38 +58,62 @@ function markSynced() {
   localStorage.setItem(SYNC_KEY, today());
 }
 
-function parseMDY(dateStr) {
+function cleanCell(v) {
+  return String(v ?? "").trim().replace(/^"+|"+$/g, ""); // remove wrapping quotes
+}
+
+/* Robust date parsing:
+   supports:
+   - 11/17/25
+   - 11/17/2025
+   - Nov 30, 2025
+*/
+function parseAnyDate(dateStr) {
   if (!dateStr) return null;
-  const p = dateStr.split("/");
-  if (p.length !== 3) return null;
-  const m = parseInt(p[0], 10);
-  const d = parseInt(p[1], 10);
-  const y = 2000 + parseInt(p[2], 10); // assumes YY
-  if (isNaN(m) || isNaN(d) || isNaN(y)) return null;
-  return { m, d, y };
+  const s = String(dateStr).trim();
+  if (!s) return null;
+
+  if (s.includes("/")) {
+    const p = s.split("/");
+    if (p.length === 3) {
+      const m = parseInt(p[0], 10);
+      const d = parseInt(p[1], 10);
+      let y = parseInt(p[2], 10);
+      if (Number.isNaN(m) || Number.isNaN(d) || Number.isNaN(y)) return null;
+      if (y < 100) y = 2000 + y;
+      const dt = new Date(y, m - 1, d);
+      return Number.isNaN(dt.getTime()) ? null : dt;
+    }
+  }
+
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : new Date(t);
 }
 
-function isAfterFifth(dateStr) {
-  const parsed = parseMDY(dateStr);
-  if (!parsed) return false;
-  return parsed.d > 5;
+/* ✅ NEW RULE:
+   Transfer must be in CURRENT MONTH and day >= 6
+*/
+function isAfterSixthOfCurrentMonth(dateStr) {
+  const dt = parseAnyDate(dateStr);
+  if (!dt) return false;
+
+  const now = new Date();
+  const sameMonth = dt.getMonth() === now.getMonth();
+  const sameYear  = dt.getFullYear() === now.getFullYear();
+  if (!sameMonth || !sameYear) return false;
+
+  return dt.getDate() >= 6;
 }
 
-/* 
+/*
    A transfer is ACTIVE from its date until 6th of the next month.
    Example: 12/15/25 → active until 01/06/26.
 */
 function isTransferActive(dateStr) {
-  const parsed = parseMDY(dateStr);
-  if (!parsed) return false;
-
-  const { m, d, y } = parsed;
-  const now = new Date();
-
-  // cutoff = 6th of the next month
-  const cutoff = new Date(y, m, 6);  // month index +1 gives next month
-
-  return now < cutoff;
+  const dt = parseAnyDate(dateStr);
+  if (!dt) return false;
+  const cutoff = new Date(dt.getFullYear(), dt.getMonth() + 1, 6, 0, 0, 0, 0);
+  return new Date() < cutoff;
 }
 
 /* ======================================================
@@ -105,13 +129,15 @@ function saveTransfersCache(arr) {
 
 /*
   Refresh transfers cache with Firestore data (only when needsSync() === true)
-  Rule:
-    - Always keep only ACTIVE transfers in cache (isTransferActive)
-    - Add new Firestore transfers (after 5th, active) if not already present
-    - Never remove active ones because Firestore changed
+
+  ✅ UPDATED RULE:
+    - Only consider transfers where lastTransferDate is after 6th of CURRENT month
+    - Still: active until next 6th (cache expiry)
+    - Still: add-only during daily sync
+    - Still: only add if user/worker is in MAIN sheet
 */
-function refreshTransfersCacheFromFirestore(allDocs) {
-  // 1) Start from existing cache, keep only active ones
+function refreshTransfersCacheFromFirestore(allDocs, users, workers) {
+  // 1) Keep only active cached transfers
   let cache = loadTransfersCache().filter(t => isTransferActive(t.date));
 
   // 2) If no fresh sync needed, just return filtered cache
@@ -120,24 +146,32 @@ function refreshTransfersCacheFromFirestore(allDocs) {
     return cache;
   }
 
-  // 3) If syncing, scan Firestore docs and add new transfers
+  // 3) Sync: scan Firestore docs and add new transfers (sheet-only)
   for (const d of allDocs) {
-    const user = (d.user || "").trim();
-    const wid  = (d.workerId || "").trim();
+    const user = cleanCell(d.user);
+    const wid  = cleanCell(d.workerId);
+
+    // must be in your Qualified sheet
+    if (!users.has(user) && !workers.has(wid)) continue;
+
     const lt   = parseFloat(d.lastTransferAmount) || 0;
     const dt   = d.lastTransferDate || "";
 
     if (!user && !wid) continue;
     if (!lt || lt < 0.01) continue;
-    if (!isAfterFifth(dt)) continue;
+
+    // ✅ NEW check: transfer must be after 6th of CURRENT month
+    if (!isAfterSixthOfCurrentMonth(dt)) continue;
+
+    // still must be active until next-month-6th
     if (!isTransferActive(dt)) continue;
 
-    // Check if this transfer (user + worker + amount + date) already exists
+    // uniqueness: user + worker + amount + date
     const exists = cache.some(t =>
-      t.user === user &&
-      t.workerId === wid &&
-      t.amount === lt &&
-      t.date === dt
+      cleanCell(t.user) === user &&
+      cleanCell(t.workerId) === wid &&
+      Number(t.amount) === lt &&
+      String(t.date) === String(dt)
     );
 
     if (!exists) {
@@ -155,22 +189,30 @@ function refreshTransfersCacheFromFirestore(allDocs) {
 }
 
 /* ======================================================
-   MAIN CSV (team / who to track)
+   MAIN CSV (team / who to track)  ✅ header-safe
 ====================================================== */
 async function loadMainCSV() {
   const res = await fetch(
-    "https://docs.google.com/spreadsheets/d/1W0fYDHy8nePZ-rkqZAX2DVOEufSHe7UJfB7OeC49b1o/export?format=csv&gid=0"
+    "https://docs.google.com/spreadsheets/d/1W0fYDHy8nePZ-rkqZAX2DVOEufSHe7UJfB7OeC49b1orkqQF1lyCw/export?format=csv&gid=0"
   );
   const text  = await res.text();
-  const lines = text.split("\n").filter(Boolean);
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
 
   const users   = new Set();
   const workers = new Set();
 
+  if (lines.length <= 1) return { users, workers };
+
+  const header = lines[0].split(",").map(h => cleanCell(h).toLowerCase());
+  const uIdx = header.findIndex(h => h === "user" || h.includes("user"));
+  const wIdx = header.findIndex(h => h === "workerid" || h.includes("worker"));
+
   for (let i=1;i<lines.length;i++){
-    const [u, w] = lines[i].split(",");
-    if (u) users.add(u.trim());
-    if (w) workers.add(w.trim());
+    const cols = lines[i].split(",");
+    const u = cleanCell(cols[uIdx >= 0 ? uIdx : 0]);
+    const w = cleanCell(cols[wIdx >= 0 ? wIdx : 1]);
+    if (u) users.add(u);
+    if (w) workers.add(w);
   }
   return { users, workers };
 }
@@ -211,9 +253,6 @@ function updateCountdown() {
 
 /* ======================================================
    BUILD DATA FOR BOTH TABS
-   - Qualified: currentEarnings ≥ 8
-   - Transferred: uses localStorage cache; only ADD new transfers from Firestore
-   - Qualified total = sum(currentEarnings) + sum(all active transfers amounts)
 ====================================================== */
 async function buildData() {
   const loadingEl    = document.getElementById("loading");
@@ -225,19 +264,19 @@ async function buildData() {
   const { users, workers } = await loadMainCSV();
   const allDocs = needsSync() ? await fetchFromFirestore() : loadCache();
 
-  // 1. Refresh transfers cache (active only) and get them
-  const transfersActive = refreshTransfersCacheFromFirestore(allDocs);
+  // transfers cache refresh (sheet-only additions, after 6th current month)
+  const transfersActive = refreshTransfersCacheFromFirestore(allDocs, users, workers);
 
   QUALIFIED_DATA   = [];
   TRANSFERRED_DATA = [];
 
-  let sumQualifiedCurrent = 0;  // currentEarnings ≥ 8
-  let sumTransfersActive  = 0;  // all active transfers (cached)
+  let sumQualifiedCurrent = 0;
+  let sumTransfersActive  = 0;
 
-  // Build Qualified users from Firestore docs
+  // Qualified: currentEarnings >= 8, sheet-only
   for (const d of allDocs) {
-    const user = (d.user || "").trim();
-    const wid  = (d.workerId || "").trim();
+    const user = cleanCell(d.user);
+    const wid  = cleanCell(d.workerId);
 
     if (!users.has(user) && !workers.has(wid)) continue;
 
@@ -245,32 +284,28 @@ async function buildData() {
     const lastDate = d.lastTransferDate || "";
     const nextDate = d.nextTransferDate || lastDate || "—";
 
-    // QUALIFIED USERS: currentEarnings ≥ 8
     if (current >= 8) {
-      QUALIFIED_DATA.push({
-        user,
-        wid,
-        current,
-        nextDate
-      });
+      QUALIFIED_DATA.push({ user, wid, current, nextDate });
       sumQualifiedCurrent += current;
     }
   }
 
-  // Build transferred data from cache (active transfers)
-  TRANSFERRED_DATA = transfersActive.map(t => ({
-    user: t.user,
-    wid: t.workerId,
-    amount: Number(t.amount) || 0,
-    date: t.date
-  }));
+  // Transferred tab: from cache only
+  TRANSFERRED_DATA = transfersActive
+    .filter(t => {
+      const u = cleanCell(t.user);
+      const w = cleanCell(t.workerId);
+      return (users.has(u) || workers.has(w)) && isAfterSixthOfCurrentMonth(t.date) && isTransferActive(t.date);
+    })
+    .map(t => ({
+      user: cleanCell(t.user),
+      wid: cleanCell(t.workerId),
+      amount: Number(t.amount) || 0,
+      date: t.date
+    }));
 
-  // Sum of all active transfers (whatever month, as long as before next 6th)
-  for (const t of TRANSFERRED_DATA) {
-    sumTransfersActive += t.amount;
-  }
+  for (const t of TRANSFERRED_DATA) sumTransfersActive += t.amount;
 
-  // Sort for display
   QUALIFIED_DATA.sort((a,b)=>b.current - a.current);
   TRANSFERRED_DATA.sort((a,b)=>b.amount - a.amount);
 
@@ -280,7 +315,7 @@ async function buildData() {
     `Qualified (current ≥ $8 + active transfers): <b>$${finalQualifiedTotal.toFixed(2)}</b> (${QUALIFIED_DATA.length} users)`;
 
   totalTransEl.innerHTML =
-    `Active Transfers (after 5th, kept until next 6th): <b>$${sumTransfersActive.toFixed(2)}</b> (${TRANSFERRED_DATA.length} transfers)`;
+    `Active Transfers (after 6th of current month): <b>$${sumTransfersActive.toFixed(2)}</b> (${TRANSFERRED_DATA.length} transfers)`;
 
   renderQualifiedTable();
   initTransferredFilterAndTable();
@@ -313,12 +348,14 @@ function renderQualifiedTable() {
 function initTransferredFilterAndTable() {
   const select = document.getElementById("transferDateFilter");
 
-  // unique dates from active transfers
   const dates = Array.from(
     new Set(TRANSFERRED_DATA.map(r => r.date).filter(Boolean))
-  ).sort((a,b)=> new Date(a) - new Date(b));
+  ).sort((a,b)=> {
+    const da = parseAnyDate(a)?.getTime() ?? 0;
+    const db = parseAnyDate(b)?.getTime() ?? 0;
+    return da - db;
+  });
 
-  // Build options
   select.innerHTML = `<option value="">All Dates</option>`;
   for (const d of dates) {
     const opt = document.createElement("option");
@@ -328,7 +365,6 @@ function initTransferredFilterAndTable() {
   }
 
   select.onchange = () => renderTransferredTable();
-
   renderTransferredTable();
 }
 
@@ -341,6 +377,13 @@ function renderTransferredTable() {
     if (!filterVal) return true;
     return r.date === filterVal;
   });
+
+  if (data.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="4" style="text-align:center;color:#6b7280;">No records</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
 
   for (const r of data) {
     const tr = document.createElement("tr");
@@ -359,7 +402,7 @@ function renderTransferredTable() {
 ====================================================== */
 async function loadTeamCSV() {
   const res = await fetch(
-    "https://docs.google.com/spreadsheets/d/1W0fYDHy8nePZ-rkqZAX2DVOEufSHe7UJfB7OeC49b1o/export?format=csv&gid=0"
+    "https://docs.google.com/spreadsheets/d/1W0fYDHy8nePZ-rkqZAX2DVOEufSHe7UJfB7OeC49b1orkqQF1lyCw/export?format=csv&gid=0"
   );
   const text  = await res.text();
   const lines = text.split("\n").filter(Boolean);
@@ -369,7 +412,7 @@ async function loadTeamCSV() {
   for (let i=1;i<lines.length;i++){
     const [user, wid] = lines[i].split(",");
     if (user && wid){
-      teamMap.set(user.trim(), wid.trim());
+      teamMap.set(cleanCell(user), cleanCell(wid));
     }
   }
   return teamMap;
@@ -379,7 +422,7 @@ function buildExcelRows(rawData, teamMap) {
   const rows = [];
 
   for (const [user, wid] of teamMap.entries()) {
-    const match = rawData.find(r => (r.workerId || "").trim() === wid);
+    const match = rawData.find(r => cleanCell(r.workerId) === wid);
     if (!match) continue;
 
     rows.push({
@@ -597,7 +640,7 @@ th {
 <!-- TRANSFERRED PANEL -->
 <div id="panel-transferred" class="table-wrap" style="display:none;">
   <div class="filter-bar">
-    Filter by Transfer Date (after 5th, active until next 6th):
+    Filter by Transfer Date (>= 6th of current month, active until next 6th):
     <select id="transferDateFilter">
       <option value="">All Dates</option>
     </select>
