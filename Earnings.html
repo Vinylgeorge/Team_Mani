@@ -146,11 +146,11 @@ function getWindow8to8() {
   const day = now.getDate();
 
   let start, endExclusive;
-  if (day >= 6) {
+  if (day >= 10) {
     start = new Date(y, m, 6, 0, 0, 0, 0);
     endExclusive = new Date(y, m + 1, 10, 0, 0, 0, 0);
   } else {
-    start = new Date(y, m - 1, 10, 0, 0, 0, 0);
+    start = new Date(y, m - 1, 6, 0, 0, 0, 0);
     endExclusive = new Date(y, m,10, 0, 0, 0, 0);
   }
   return { start, endExclusive };
