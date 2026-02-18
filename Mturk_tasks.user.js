@@ -37,6 +37,7 @@
     const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1W0fYDHy8nePZ-rkqZAX2DVOEufSHe7UJfB7OeC49b1o/export?format=csv&gid=0";
     const workerToUser = {};
 
+
     async function loadUserMap() {
       try {
         const res = await fetch(SHEET_CSV, { cache: "no-store" });
@@ -53,7 +54,7 @@
           return;
         }
 
-         for (let i = 1; i < lines.length; i++) {
+        for (let i = 1; i < lines.length; i++) {
           const parts = lines[i].split(sep).map(v => v.trim());
           const wid = parts[widIdx]?.replace(/^\\uFEFF/, "").trim();
           const usr = parts[userIdx]?.trim();
@@ -78,24 +79,15 @@
     function parseReward() {
       let reward = 0.0;
       const label = Array.from(document.querySelectorAll(".detail-bar-label"))
-        .find(el => (el.textContent || "").includes("Reward"));
+        .find(el => el.textContent.includes("Reward"));
       if (label) {
         const valEl = label.nextElementSibling;
         if (valEl) {
-          const match = (valEl.innerText || "").match(/\\$([0-9.]+)/);
+          const match = valEl.innerText.match(/\\$([0-9.]+)/);
           if (match) reward = parseFloat(match[1]);
         }
       }
       return reward;
-    }
-
-    // Start of yesterday in LOCAL TIME (client machine time)
-    function startOfYesterdayDate() {
-      const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const startOfYesterday = new Date(startOfToday);
-      startOfYesterday.setDate(startOfToday.getDate() - 1);
-      return startOfYesterday;
     }
 
     function collectTaskHit() {
@@ -105,16 +97,6 @@
       const workerId = getWorkerId();
       const user = workerToUser[workerId] || "Unknown";
 
-      const acceptedAt = Timestamp.now();
-      const startYesterday = startOfYesterdayDate();
-      const isTodayOrYesterday = acceptedAt.toDate().getTime() >= startYesterday.getTime();
-
-      // ✅ Only post if acceptedAt is within Today+Yesterday window
-      if (!isTodayOrYesterday) {
-        console.log("⏭️ Skipped posting (not Today/Yesterday):", assignmentId);
-        return null;
-      }
-
       return {
         assignmentId,
         workerId,
@@ -122,19 +104,19 @@
         requester: document.querySelector(".detail-bar-value a[href*='/requesters/']")?.innerText || "",
         title: document.querySelector(".task-project-title")?.innerText || document.title,
         reward: parseReward(),
-        acceptedAt, // ✅ Firestore Timestamp (best for querying)
-        // NOTE: TTL removed on purpose; you said TTL is not working for you.
+        acceptedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),  // 🔥 TTL field — Firestore auto-deletes after 10m
         url: window.location.href,
         status: "active"
       };
     }
 
-    // --- 🚀 Post Task ---
+    // --- 🚀 Post Task (no deleteDoc needed) ---
     async function postTask() {
       const hit = collectTaskHit();
       if (!hit) return;
       await setDoc(doc(db, "hits", hit.assignmentId), hit, { merge: true });
-      console.log("✅ Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward, "| Today+Yesterday only");
+      console.log("✅ Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward, "| TTL set for 10m");
     }
 
     // --- 🏁 Initialize ---
