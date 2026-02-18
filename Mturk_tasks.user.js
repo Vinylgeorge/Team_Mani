@@ -3,9 +3,9 @@
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       none
-// @version     1.3
-// @updateURL    https://github.com/Vinylgeorge/Team-perundurai/raw/refs/heads/main/hit-monitor.user.js
-// @downloadURL  https://github.com/Vinylgeorge/Team-perundurai/raw/refs/heads/main/hit-monitor.user.js
+// @version     1.4
+// @updateURL    https://github.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js
+// @downloadURL  https://github.com/Vinylgeorge/Team_Mani/refs/heads/main/Mturk_tasks.user.js
 // ==/UserScript==
 
 (function () {
@@ -14,7 +14,7 @@
   const s = document.createElement("script");
   s.type = "module";
   s.textContent = `
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import {
       getFirestore,
       setDoc,
