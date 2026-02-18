@@ -1,11 +1,11 @@
 // ==UserScript==
-// @name        MTurk Task → Firestore + User Mapping (TTL Auto-Expire 10m)
+// @name        MTurk Tasks
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       none
-// @version     1.2
-// @updateURL    https://github.com/Vinylgeorge/Team-Mani/raw/refs/heads/main/Mturk_tasks.user.js
-// @downloadURL  https://github.com/Vinylgeorge/Team-Mani/raw/refs/heads/main/Mturk_tasks.user.js
+// @version     1.3
+// @updateURL    https://github.com/Vinylgeorge/Team-perundurai/raw/refs/heads/main/hit-monitor.user.js
+// @downloadURL  https://github.com/Vinylgeorge/Team-perundurai/raw/refs/heads/main/hit-monitor.user.js
 // ==/UserScript==
 
 (function () {
@@ -15,9 +15,14 @@
   s.type = "module";
   s.textContent = `
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, setDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import {
+      getFirestore,
+      setDoc,
+      doc,
+      Timestamp
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // --- 🔥 Firebase Config ---
+       // --- 🔥 Firebase Config ---
    const firebaseConfig = {
   apiKey: "AIzaSyBkRYurR0cD2VBSNaqT2hyhMu0-AYw6hpw",
   authDomain: "manitasks-a9cd5.firebaseapp.com",
@@ -26,12 +31,11 @@
   messagingSenderId: "123098755087",
   appId: "1:123098755087:web:2f7f8a04aa7ce47695737a"
 };
-
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
     // --- 📋 Google Sheet User Mapping ---
-    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1Ytmr7dHSAv69N27uZcrhKaEerL8WhzMCI02vugq_C_M/export?format=csv&gid=0";
+    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1W0fYDHy8nePZ-rkqZAX2DVOEufSHe7UJfB7OeC49b1o/export?format=csv&gid=0";
     const workerToUser = {};
 
     async function loadUserMap() {
@@ -50,7 +54,7 @@
           return;
         }
 
-        for (let i = 1; i < lines.length; i++) {
+         for (let i = 1; i < lines.length; i++) {
           const parts = lines[i].split(sep).map(v => v.trim());
           const wid = parts[widIdx]?.replace(/^\\uFEFF/, "").trim();
           const usr = parts[userIdx]?.trim();
@@ -75,15 +79,24 @@
     function parseReward() {
       let reward = 0.0;
       const label = Array.from(document.querySelectorAll(".detail-bar-label"))
-        .find(el => el.textContent.includes("Reward"));
+        .find(el => (el.textContent || "").includes("Reward"));
       if (label) {
         const valEl = label.nextElementSibling;
         if (valEl) {
-          const match = valEl.innerText.match(/\\$([0-9.]+)/);
+          const match = (valEl.innerText || "").match(/\\$([0-9.]+)/);
           if (match) reward = parseFloat(match[1]);
         }
       }
       return reward;
+    }
+
+    // Start of yesterday in LOCAL TIME (client machine time)
+    function startOfYesterdayDate() {
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const startOfYesterday = new Date(startOfToday);
+      startOfYesterday.setDate(startOfToday.getDate() - 1);
+      return startOfYesterday;
     }
 
     function collectTaskHit() {
@@ -93,6 +106,16 @@
       const workerId = getWorkerId();
       const user = workerToUser[workerId] || "Unknown";
 
+      const acceptedAt = Timestamp.now();
+      const startYesterday = startOfYesterdayDate();
+      const isTodayOrYesterday = acceptedAt.toDate().getTime() >= startYesterday.getTime();
+
+      // ✅ Only post if acceptedAt is within Today+Yesterday window
+      if (!isTodayOrYesterday) {
+        console.log("⏭️ Skipped posting (not Today/Yesterday):", assignmentId);
+        return null;
+      }
+
       return {
         assignmentId,
         workerId,
@@ -100,19 +123,19 @@
         requester: document.querySelector(".detail-bar-value a[href*='/requesters/']")?.innerText || "",
         title: document.querySelector(".task-project-title")?.innerText || document.title,
         reward: parseReward(),
-        acceptedAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),  // 🔥 TTL field — Firestore auto-deletes after 10m
+        acceptedAt, // ✅ Firestore Timestamp (best for querying)
+        // NOTE: TTL removed on purpose; you said TTL is not working for you.
         url: window.location.href,
         status: "active"
       };
     }
 
-    // --- 🚀 Post Task (no deleteDoc needed) ---
+    // --- 🚀 Post Task ---
     async function postTask() {
       const hit = collectTaskHit();
       if (!hit) return;
       await setDoc(doc(db, "hits", hit.assignmentId), hit, { merge: true });
-      console.log("✅ Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward, "| TTL set for 10m");
+      console.log("✅ Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward, "| Today+Yesterday only");
     }
 
     // --- 🏁 Initialize ---
