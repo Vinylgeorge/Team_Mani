@@ -3,7 +3,7 @@
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       none
-// @version     1.1
+// @version     1.2
 // @updateURL    https://github.com/Vinylgeorge/Team-Mani/raw/refs/heads/main/Mturk_tasks.user.js
 // @downloadURL  https://github.com/Vinylgeorge/Team-Mani/raw/refs/heads/main/Mturk_tasks.user.js
 // ==/UserScript==
@@ -31,7 +31,7 @@
     const db = getFirestore(app);
 
     // --- 📋 Google Sheet User Mapping ---
-    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
+    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1Ytmr7dHSAv69N27uZcrhKaEerL8WhzMCI02vugq_C_M/export?format=csv&gid=0";
     const workerToUser = {};
 
     async function loadUserMap() {
