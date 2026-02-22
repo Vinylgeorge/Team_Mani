@@ -1,13 +1,13 @@
 // ==UserScript==
-// @name        MTurk Tasks
-// @namespace   Violentmonkey Scripts
-// @match       https://worker.mturk.com/projects/*/tasks/*
-// @grant       none
-// @version     1.5
+// @name         MTurk Tasks
+// @namespace    Violentmonkey Scripts
+// @match        https://worker.mturk.com/projects/*/tasks/*
+// @grant        none
+// @run-at       document-idle
+// @version      1.5
 // @updateURL    https://github.com/Vinylgeorge/Team_Mani/raw/refs/heads/main/Mturk_tasks.user.js
 // @downloadURL  https://github.com/Vinylgeorge/Team_Mani/raw/refs/heads/main/Mturk_tasks.user.js
 // ==/UserScript==
-
 (function () {
   'use strict';
 
