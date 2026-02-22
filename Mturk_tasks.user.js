@@ -6,6 +6,7 @@
 // @version     1.5
 // @updateURL    https://github.com/Vinylgeorge/Team_Mani/raw/refs/heads/main/Mturk_tasks.user.js
 // @downloadURL  https://github.com/Vinylgeorge/Team_Mani/raw/refs/heads/main/Mturk_tasks.user.js
+// ==/UserScript==
 
 (function () {
   'use strict';
