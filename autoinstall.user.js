@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AB2soft V8 pro (Protected)
-// @version      12
-// @description  Protected AB2soft script (Persistent Encrypted Per-Worker Auth)
+// @version      13
+// @description   Protected AB2soft script (Persistent Encrypted Per-Worker Auth)
 // @author       Arun Balaji Bose
 // @match        https://worker.mturk.com/tasks/*
 
