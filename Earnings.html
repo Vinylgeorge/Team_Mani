@@ -146,7 +146,7 @@ function getDocAnyDate(d){
 
 /* ================= TEAM CSV ================= */
 async function loadTeam(){
-  const res = await fetch("https://docs.google.com/spreadsheets/d/1W0fYDHy8nePZ-rkqZAX2DVOEufSHe7UJfB7OeC49b1o/export?format=csv&gid=0");
+  const res = await fetch("https://docs.google.com/spreadsheets/d/1RU_hAAxyza7cxpyce6-ePCuUQh52VmW9EgcTqli1oA/export?format=csv&gid=0");
   const rows = (await res.text()).split("\n").slice(1);
   const users=new Set(), workers=new Set();
   rows.forEach(r=>{
