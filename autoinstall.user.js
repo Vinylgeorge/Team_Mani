@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AB2soft Secure Loader
-// @version      1
+// @version      25
 // @match        https://worker.mturk.com/tasks/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM.getValue
