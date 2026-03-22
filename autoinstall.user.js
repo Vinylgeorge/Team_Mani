@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRPsoft V8 pro (Protected)
-// @version      29
+// @version      30
 // @description  Protected AB2soft script (Persistent Encrypted Per-Worker Auth)
 // @match        https://worker.mturk.com/tasks/*
 //
@@ -27,12 +27,38 @@
   const J = 'AB2soft::V6Pro::PermanentKey';
   const AUTH_SLOT_KEY = 'AB2_AUTH_SLOT_V1';
   const LAST_WORKER_ID_KEY = 'AB2_LAST_WORKER_ID';
+  const AUTH_SCHEMA_KEY = 'AB2_AUTH_SCHEMA_VERSION';
+  const AUTH_SCHEMA_VERSION = 2;
 
   function isLikelyWorkerId(id) {
     return typeof id === 'string' && /^[A-Za-z0-9]{8,32}$/.test(id) && id !== 'UNKNOWN_WORKER';
   }
 
   async function P() {
+    // Try direct DOM extraction first (more reliable than raw HTML matching).
+    try {
+      const nodes = Array.from(document.querySelectorAll('[data-react-props]'));
+      for (const n of nodes) {
+        const raw = n.getAttribute('data-react-props');
+        if (!raw || raw.indexOf('textToCopy') === -1) continue;
+        let parsed = null;
+        try {
+          parsed = JSON.parse(raw.replace(/&quot;/g, '"'));
+        } catch (e) {}
+        const candidate = parsed && parsed.textToCopy ? String(parsed.textToCopy).trim() : '';
+        if (isLikelyWorkerId(candidate)) {
+          await GM.setValue(LAST_WORKER_ID_KEY, candidate);
+          return candidate;
+        }
+      }
+
+      const meBarId = document.querySelector('.me-bar .text-uppercase span')?.textContent?.trim() || '';
+      if (isLikelyWorkerId(meBarId)) {
+        await GM.setValue(LAST_WORKER_ID_KEY, meBarId);
+        return meBarId;
+      }
+    } catch (e) {}
+
     try {
       const M = document.documentElement ? document.documentElement.innerHTML : '';
       const H = [
@@ -127,27 +153,21 @@
 
   async function B() {
     const workerId = await P();
+
+    // Force one clean re-auth on this fixed version.
+    const schemaVersion = await GM.getValue(AUTH_SCHEMA_KEY, 0);
+    if (schemaVersion !== AUTH_SCHEMA_VERSION) {
+      await GM.setValue(AUTH_SLOT_KEY, null);
+      await GM.setValue(AUTH_SCHEMA_KEY, AUTH_SCHEMA_VERSION);
+    }
+
     const slot = await GM.getValue(AUTH_SLOT_KEY, null);
 
     // Fast path: already authorized for this worker ID.
-    if (slot && slot.workerId === workerId && slot.token) {
+    if (isLikelyWorkerId(workerId) && slot && slot.workerId === workerId && slot.token) {
       try {
         const ok = await L(slot.token, workerId);
         if (ok === 'OK') return true;
-      } catch (e) {}
-    }
-
-    // Migrate from old per-worker key if present.
-    const legacyKey = 'AB2_AUTH::' + workerId;
-    const legacyToken = await GM.getValue(legacyKey, null);
-    if (legacyToken) {
-      try {
-        const ok = await L(legacyToken, workerId);
-        if (ok === 'OK') {
-          await GM.setValue(AUTH_SLOT_KEY, { workerId, token: legacyToken, ts: Date.now() });
-          await GM.setValue(LAST_WORKER_ID_KEY, workerId);
-          return true;
-        }
       } catch (e) {}
     }
 
@@ -162,6 +182,13 @@
     if (d !== E && d !== Q) {
       alert('Access denied!');
       return false;
+    }
+
+    if (!isLikelyWorkerId(workerId)) {
+      // Do not persist auth to UNKNOWN_WORKER. User can run now, then bind on next load.
+      await GM.setValue(AUTH_SLOT_KEY, null);
+      alert('Worker ID not detected. Reload MTurk tasks page once to bind access permanently.');
+      return true;
     }
 
     const token = await V('OK', workerId);
