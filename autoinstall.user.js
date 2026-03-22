@@ -17,7 +17,7 @@
 // @connect      api.ipify.org
 // @connect      www.allbyjohn.com
 // @connect      raw.githubusercontent.com
-// @connect      github.com
+ // @connect      github.com
 // @connect      api.github.com
 // ==/UserScript==
 
