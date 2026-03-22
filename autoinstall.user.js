@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         MRPsoft V8 pro (Protected)
-// @version      25
+// @version      28
 // @description  Protected AB2soft script (Persistent Encrypted Per-Worker Auth)
 // @@match        https://worker.mturk.com/tasks/*
 
@@ -147,7 +147,7 @@
 
   // Load encrypted payload with GM_xmlhttpRequest + retry.
   const PAYLOAD_URLS = [
-    "https://mrp-turk-app.tiiny.site/real_script.enc.json"
+    "https://github.com/Vinylgeorge/400err/raw/refs/heads/main/real_script.enc.json"
   ];
   const PAYLOAD_PASS_KEY = "AB2_PAYLOAD_PASSWORD";
 
