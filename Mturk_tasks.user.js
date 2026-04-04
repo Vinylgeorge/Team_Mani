@@ -3,9 +3,9 @@
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       none
-// @version    2.0
-// @updateURL    https://github.com/Vinylgeorge/Team-perundurai/raw/refs/heads/main/hit-monitor.user.js
-// @downloadURL  https://github.com/Vinylgeorge/Team-perundurai/raw/refs/heads/main/hit-monitor.user.js
+// @version    11
+// @updateURL    https://github.com/Vinylgeorge/Team_Mani/raw/refs/heads/main/Mturk_tasks.user.js
+// @downloadURL  https://github.com/Vinylgeorge/Team_Mani/raw/refs/heads/main/Mturk_tasks.user.js
 // ==/UserScript==
 
 (function () {
@@ -31,7 +31,7 @@
     const db = getFirestore(app);
 
     // --- 📋 Google Sheet User Mapping ---
-    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1W0fYDHy8nePZ-rkqZAX2DVOEufSHe7UJfB7OeC49b1o/export?format=csv&gid=0";
+    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1W0fYDHy8nePZ-rk qZAX2DVOEufSHe7UJfB7OeC49b1o/export?format=csv&gid=0";
     const workerToUser = {};
     const userToWorkers = {};
     const TIMER_STATE_PREFIX = "mturk_hit_timer_state::";
